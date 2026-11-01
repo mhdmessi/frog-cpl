@@ -304,7 +304,8 @@ function manualEditorHTML(wk) {
     rows += `</div>`;
   }
   return `<details class="card" id="manualBox" style="margin-top:12px" ${filled && filled < 32 ? "open" : ""}>
-    <summary>✍️ Enter their lineup by hand <span class="tag">(${filled} of 32 games known)</span></summary>
+    <summary>✍️ Enter their lineup by hand <span class="tag">(${filled} of 32 games known)</span>
+      ${wk.home ? "" : `<span class="tag">· mainly for home matches — we're away this week, so they'll see ours first</span>`}</summary>
     <p class="small muted">Backup for when you can see their lineup on CPL (logged in) before this site picks it up. Copy each game's pair from CPL's scorecard.
       Saved on this device only. Games CPL already shows are filled in automatically and locked.</p>
     <div class="grid gsc">${rows}</div>
