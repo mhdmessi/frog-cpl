@@ -30,6 +30,8 @@ jobs:
           python-version: "3.12"
       - name: Pull CPL results + team sheet
         run: python3 scripts/build_data.py
+      - name: Cache-bust app files so phones load the newest version
+        run: sed -i "s/__V__/${GITHUB_SHA::7}-$(date +%s)/g" site/index.html
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:

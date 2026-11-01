@@ -159,7 +159,7 @@ function home() {
     const noReply = D.players.filter((p) => !p.isSub && !nm.avail[p.id]).map((p) => p.id);
     let alert = "";
     if (ym < 4 || yw < 4)
-      alert = `<div class="alert ${ym < 4 && yw < 4 ? "bad" : "warn"}">⚠️ Only <b>${ym} men</b> and <b>${yw} women</b> confirmed. A full lineup needs <b>4 men + 4 women</b> (5 + 5 gives rest rotations). ${
+      alert = `<div class="alert ${ym < 4 && yw < 4 ? "bad" : "warn"}">⚠️ Only <b>${ym} men</b> and <b>${yw} women</b> confirmed. A full lineup needs <b>4 men + 4 women</b>; 5 + 5 is the most that still gives everyone 6+ games. ${
         maybe.length ? `Maybes: ${maybe.map(label).join(", ")}. ` : ""
       }Time to chase subs.</div>`;
     else alert = `<div class="alert good">✅ ${ym} men and ${yw} women confirmed — enough for a full lineup.</div>`;
@@ -202,6 +202,8 @@ function home() {
 
 /* ------------------------------------------------------------ GAME PLAN (lineup builder) */
 const LU = { week: null, sel: null, selWeek: null, mode: "even" };
+const MIN_GAMES = 6; // team rule: everyone plays at least 6 of 8 games
+const MAX_FOR_MIN = Math.floor(32 / MIN_GAMES); // each gender has 32 game spots per match -> 5 players
 const TYPE_LABEL = { mixed: "Mixed", female: "Women's", male: "Men's" };
 const gameType = (n) => (n % 8 < 4 ? "mixed" : n % 8 < 6 ? "female" : "male");
 let LSHORT = null;
@@ -269,8 +271,8 @@ function lineup(arg, auto) {
       ${ourPosted ? `<div class="alert good">Our lineup on CPL: ${ourPosted} of 32 games filled in.</div>` : ""}
       <div class="row" style="margin-top:6px">
         <span class="seg" id="luMode">
-          <button data-m="even" class="${LU.mode === "even" ? "on" : ""}" data-tip="Everyone of the same gender plays within 1 game of each other, minimum 4 games">Equal playing time</button>
-          <button data-m="win" class="${LU.mode === "win" ? "on" : ""}" data-tip="Ignores playing time, still at least 4 games each">Max wins</button>
+          <button data-m="even" class="${LU.mode === "even" ? "on" : ""}" data-tip="Everyone of the same gender plays within 1 game of each other, minimum ${MIN_GAMES} games">Equal playing time</button>
+          <button data-m="win" class="${LU.mode === "win" ? "on" : ""}" data-tip="Ignores playing time, still at least ${MIN_GAMES} games each">Max wins</button>
         </span>
       </div>
       <p class="small muted" style="margin:10px 0 0">Tick who's playing (up to 6 men and 6 women). <b>In</b> players from the sheet are pre-checked.</p>
@@ -282,6 +284,7 @@ function lineup(arg, auto) {
     </div>
     <div id="luOut"></div><div id="luPairs"></div>`);
 
+  let lastChecked = null;
   function drawPick() {
     const grp = (male) =>
       D.players
@@ -302,14 +305,16 @@ function lineup(arg, auto) {
     $("#luPick").querySelectorAll("input").forEach((i) =>
       i.addEventListener("change", () => {
         i.checked ? LU.sel.add(i.dataset.id) : LU.sel.delete(i.dataset.id);
+        lastChecked = i.checked ? i.dataset.id : null;
         drawPick();
       })
     );
     const m = [...LU.sel].filter(isMale).length, w = LU.sel.size - m;
-    $("#luCount").innerHTML = `${m} men · ${w} women` + (m < 4 || w < 4 ? ` — <b class="neg">need at least 4 + 4</b>` : m > 6 || w > 6 ? ` — <b class="neg">max 6 + 6</b>` : "");
+    const over = [m > MAX_FOR_MIN ? `${m} men` : "", w > MAX_FOR_MIN ? `${w} women` : ""].filter(Boolean).join(" and ");
+    $("#luCount").innerHTML = `${m} men · ${w} women` + (m < 4 || w < 4 ? ` — <b class="neg">need at least 4 + 4</b>` : m > 6 || w > 6 ? ` — <b class="neg">max 6 + 6</b>` : over ? ` — <b class="neg">with ${over}, not everyone can get ${MIN_GAMES} games (each gender has only 32 game spots). 5 + 5 is the max for ${MIN_GAMES}+ each.</b>` : "");
     $("#luGo").disabled = m < 4 || w < 4 || m > 6 || w > 6;
     $("#luFill").hidden = !(m < 4 || w < 4);
-    showTopPairs([...LU.sel]);
+    showTopPairs([...LU.sel], lastChecked);
   }
   drawPick();
 
@@ -345,16 +350,29 @@ function lineup(arg, auto) {
   if ((auto === "go" || auto === "fill") && !$("#luGo").disabled) $("#luGo").click();
 }
 
-function showTopPairs(ids) {
+function showTopPairs(ids, focus) {
   const sel = new Set(ids);
-  const avail = D.pairs.filter((p) => sel.has(p.a) && sel.has(p.b) && p.g >= 2).slice(0, 8);
+  const all = D.pairs.filter((p) => sel.has(p.a) && sel.has(p.b));
   const el = $("#luPairs");
   if (!el) return;
-  if (!avail.length) return (el.innerHTML = "");
-  el.innerHTML = `<h2>How the checked players have done together (2+ games)</h2><div class="grid g3">${avail
-    .map((p) => `<div class="card"><b>${esc(sn(p.a))} + ${esc(sn(p.b))}</b> <span class="tag">${TYPE_LABEL[p.type]}</span>
-      <div>${p.w}-${p.l} together · <span class="${cls(p.diff)}">${signed(p.diff)}</span> pts/game</div></div>`)
-    .join("")}</div>`;
+  if (!all.length) return (el.innerHTML = "");
+  const card = (p) => `<div class="card"><b>${esc(sn(p.a))} + ${esc(sn(p.b))}</b> <span class="tag">${TYPE_LABEL[p.type]}</span>
+      <div>${p.w}-${p.l} together · <span class="${cls(p.diff)}">${signed(p.diff)}</span> pts/game</div></div>`;
+  const top = all.filter((p) => p.g >= 2).slice(0, 6);
+  const mine = focus && sel.has(focus) ? all.filter((p) => p.a === focus || p.b === focus).sort((a, b) => b.strength - a.strength) : [];
+  el.innerHTML = `<h2>How the checked players have done together</h2>
+    ${mine.length ? `<h3>Pairs with ${esc(sn(focus))} (just checked)</h3><div class="grid g3" style="margin-bottom:14px">${mine.map(card).join("")}</div>`
+      : focus && sel.has(focus) ? `<p class="muted">${esc(sn(focus))} hasn't played with any of the other checked players yet.</p>` : ""}
+    ${top.length ? `<h3>Best proven pairs (2+ games)</h3><div class="grid g3">${top.map(card).join("")}</div>` : ""}
+    <details class="card" style="margin-top:12px"><summary>All ${all.length} pairs among checked players</summary><div id="luPairsAll" style="margin-top:10px"></div></details>`;
+  sortableTable($("#luPairsAll"), [
+    { key: "names", label: "Pair", html: (p) => `<b>${esc(sn(p.a))} + ${esc(sn(p.b))}</b>`, sort: (p) => sn(p.a) },
+    { key: "type", label: "Type", html: (p) => TYPE_LABEL[p.type] },
+    { key: "g", label: "Games", num: true },
+    { key: "w", label: "W-L", num: true, html: (p) => `${p.w}-${p.l}`, sort: (p) => p.w / p.g },
+    { key: "diff", label: "+/- per game", num: true, html: (p) => `<span class="${cls(p.diff)}">${signed(p.diff)}</span>` },
+    { key: "chem", label: "Chemistry", num: true, html: (p) => `<span class="${cls(p.chem)}">${signed(p.chem)}</span>` },
+  ], all, { key: "diff", dir: -1 });
 }
 
 /**
@@ -397,7 +415,7 @@ function optimize(men, women, { mode, plan }) {
     let pen = 0;
     for (const g of [men, women]) {
       const n = g.map((id) => gc.get(id) || 0);
-      for (const x of n) if (x < 4) pen += (4 - x) * 1.2; // nobody under 4 games
+      for (const x of n) if (x < MIN_GAMES) pen += (MIN_GAMES - x) ** 2 * 2; // everyone plays at least MIN_GAMES; shortfalls get spread out
       if (mode === "even") {
         const spread = Math.max(...n) - Math.min(...n);
         if (spread > 1) pen += (spread - 1) * 1.0;
@@ -492,7 +510,7 @@ function showLineup(best, wk, plan) {
       <div class="card"><div class="tag">BEST CHANCES</div>${sorted.slice(0, 3).map((g) => `<div>G${g.n + 1}: ${g.us.map(lname).join(" + ")} <b class="pos">${Math.round(g.p * 100)}%</b></div>`).join("")}</div>
       <div class="card"><div class="tag">TOUGHEST GAMES</div>${sorted.slice(-3).reverse().map((g) => `<div>G${g.n + 1}: ${g.us.map(lname).join(" + ")} <b class="neg">${Math.round(g.p * 100)}%</b></div>`).join("")}</div>
     </div>
-    ${s.pen > 0.01 ? `<div class="alert warn">With this group, not every playing-time goal could be met — some players are slightly over/under.</div>` : ""}
+    ${s.pen > 0.01 ? `<div class="alert warn">With this group, not every playing-time goal could be met (everyone ${MIN_GAMES}+ games, within 1 of each other) — check the games-per-player counts.</div>` : ""}
     <div class="row" style="margin:12px 0"><button class="btn ghost" id="luCopy">Copy lineup as text</button>
       <button class="btn ghost" id="luAgain">Try another version</button></div>
     <h3 style="margin-top:16px">Rosters</h3>
@@ -703,13 +721,13 @@ function scheduleExtras() {
   if (!weeks.length) return;
   const ids = D.players.filter((p) => p.g > 0).sort((a, b) => a.gender.localeCompare(b.gender) || b.g - a.g);
   section(`<h2>Playing time (games per match)</h2>
-    <p class="muted">Out of 8 possible per match. Goal: everyone of the same gender within about 1 game of each other, nobody under 4.</p>
+    <p class="muted">Out of 8 possible per match. Goal: everyone of the same gender within about 1 game of each other, nobody under ${MIN_GAMES}.</p>
     <div class="tbl-wrap"><table><thead><tr><th class="nosort">Player</th>${weeks.map((w) => `<th class="nosort num">W${w}</th>`).join("")}<th class="nosort num">Avg</th></tr></thead><tbody>
     ${ids.map((p) => {
       const vals = weeks.map((w) => D.playingTime[w][p.id]);
       const played = vals.filter((v) => v);
       return `<tr><td>${esc(sn(p.id))} <span class="tag">${p.gender === "Male" ? "M" : "W"}${p.isSub ? " · sub" : ""}</span></td>${vals
-        .map((v) => `<td class="num ${v && v < 4 ? "neg" : ""}">${v || '<span class="muted">·</span>'}</td>`).join("")}
+        .map((v) => `<td class="num ${v && v < MIN_GAMES ? "neg" : ""}">${v || '<span class="muted">·</span>'}</td>`).join("")}
         <td class="num"><b>${played.length ? (played.reduce((a, b) => a + b, 0) / played.length).toFixed(1) : "–"}</b></td></tr>`;
     }).join("")}</tbody></table></div>`);
 }
@@ -732,7 +750,7 @@ function about() {
       It's shrunk toward 0 for pairs with only a game or two.</p>
     <h3>Game Plan (lineup builder)</h3>
     <p>CPL matches are 32 games in 4 rounds; each round is games 1–4 mixed, 5–6 women's, 7–8 men's, and a player plays at most one mixed and one same-gender game per round.
-      The builder tries tens of thousands of lineups and keeps the one with the most expected game wins, while keeping playing time nearly equal (same-gender teammates within 1 game, nobody under 4).
+      The builder tries tens of thousands of lineups and keeps the one with the most expected game wins, while keeping playing time nearly equal (same-gender teammates within 1 game, everyone at least ${MIN_GAMES} of the 8 possible games — so 5 men + 5 women is the most you can bring and still give everyone 6).
       Before the opponent posts, each game is planned against their <i>typical</i> pair for that game type. Once they post (usually 1–2 days before), the site picks it up within an hour
       (it checks hourly Thursday–Saturday) and each of our pairs is matched against the exact pair they'll face. Win chances are estimates — a 60% pair still loses 4 out of 10.
       As a reality check, the model was tested on each match while hiding that match's results: it picked the winning pair <b>${m.oosAccuracy}%</b> of the time.</p>
