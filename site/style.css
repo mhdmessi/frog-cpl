@@ -143,3 +143,25 @@ details.sc-d { margin-bottom: 10px; }
 details.sc-d > summary { padding: 10px 0; }
 .gsc { grid-template-columns: repeat(auto-fit, minmax(min(100%, 520px), 1fr)); }
 .round { overflow-x: auto; }
+
+/* ---- team switcher: each team gets its own unmistakable color */
+.brandtext { flex: 1; min-width: 0; }
+.teambadge { display: inline-block; margin-left: 6px; padding: 1px 12px; border-radius: 99px; background: #fff; color: var(--teamc); font-size: 22px; font-weight: 800; vertical-align: 2px; }
+.teamswitch { display: inline-flex; background: rgba(0,0,0,.25); border-radius: 12px; padding: 4px; gap: 4px; }
+.teamswitch button { border: 0; background: transparent; color: #fff; font-size: 16px; font-weight: 750; padding: 9px 16px; border-radius: 9px; cursor: pointer; opacity: .8; }
+.teamswitch button.on { background: #fff; color: var(--teamc); opacity: 1; }
+body { --teamc: #146f12; }
+body[data-team="3.5"] { --teamc: #4b2bb3; }
+.top { background: var(--teamc); }
+@media (prefers-color-scheme: dark) {
+  body { --teamc: #0f5a0e; }
+  body[data-team="3.5"] { --teamc: #3d2491; }
+  .top { background: var(--teamc); }
+}
+body[data-team="3.5"] .tabs a.on { box-shadow: inset 0 3px 0 #4b2bb3; }
+body[data-team="3.0"] .tabs a.on { box-shadow: inset 0 3px 0 #146f12; }
+@media (max-width: 600px) {
+  .brand { flex-wrap: wrap; }
+  .teamswitch { width: 100%; }
+  .teamswitch button { flex: 1; }
+}

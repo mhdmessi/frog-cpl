@@ -33,30 +33,76 @@ function pairVal(a, b) {
 }
 
 /* ------------------------------------------------------------ boot */
-fetch("data.json?v=" + Date.now())
-  .then((r) => r.json())
-  .then((data) => {
-    D = data;
-    SIG = D.model.sigma || 2.5;
-    D.players.forEach((p) => (P[p.id] = p));
-    const firsts = {};
-    D.players.forEach((p) => {
-      const f = p.name.split(" ")[0];
-      firsts[f] = (firsts[f] || 0) + 1;
-    });
-    D.players.forEach((p) => {
-      const parts = p.name.split(" ");
-      SHORT[p.id] = firsts[parts[0]] > 1 ? `${parts[0]} ${(parts[1] || "")[0] || ""}.` : parts[0];
-    });
-    D.pairs.forEach((p) => (PAIR[pairKey(p.a, p.b)] = p));
-    $("#sub").textContent = `${D.division} · ${D.season}`;
-    $("#foot").innerHTML = `Data from <a href="https://www.crossclubpickleball.com/leagues/dashboard" target="_blank" rel="noopener">crossclubpickleball.com</a>
-      and the <a href="${esc(D.sheetUrl)}" target="_blank" rel="noopener">team availability sheet</a>.
-      Updated ${new Date(D.generated).toLocaleString()}. Refreshes automatically every few hours.`;
+/* Two Frog teams (3.0 and 3.5). The chosen team lives in the URL (?team=3.5) so shared links open the right one,
+   and is remembered on this device. Each team has its own header color so nobody reads the wrong one by mistake. */
+let TEAM_LEVEL = null, TEAMS = ["3.0", "3.5"];
+
+function pickTeam() {
+  const q = new URLSearchParams(location.search).get("team");
+  if (q && TEAMS.includes(q)) return q;
+  const saved = localStorage.getItem("frogTeam");
+  return saved && TEAMS.includes(saved) ? saved : TEAMS[0];
+}
+
+function drawSwitcher() {
+  $("#teamswitch").innerHTML = TEAMS.map((t) => `<button data-t="${t}" class="${t === TEAM_LEVEL ? "on" : ""}" aria-pressed="${t === TEAM_LEVEL}">${t} team</button>`).join("");
+  $("#teamswitch").querySelectorAll("button").forEach((b) => b.addEventListener("click", () => switchTeam(b.dataset.t)));
+}
+
+function switchTeam(level) {
+  if (level === TEAM_LEVEL) return;
+  const url = new URL(location.href);
+  url.searchParams.set("team", level);
+  history.replaceState(null, "", url);
+  loadTeam(level);
+}
+
+function loadTeam(level) {
+  TEAM_LEVEL = level;
+  localStorage.setItem("frogTeam", level);
+  document.body.dataset.team = level;
+  document.title = `Frog ${level} · CPL Team Hub`;
+  $("#teamname").textContent = level;
+  drawSwitcher();
+  $("#app").innerHTML = `<p class="loading">Loading the ${level} team…</p>`;
+  return fetch(`data-${level}.json?v=` + Date.now())
+    .then((r) => {
+      if (!r.ok) throw new Error(`data for ${level} not found`);
+      return r.json();
+    })
+    .then((data) => {
+      D = data;
+      P = {}; SHORT = {}; PAIR = {}; LSHORT = null;
+      LU.week = null; LU.sel = null; LU.selWeek = null;
+      SIG = D.model.sigma || 2.5;
+      D.players.forEach((p) => (P[p.id] = p));
+      const firsts = {};
+      D.players.forEach((p) => {
+        const f = p.name.split(" ")[0];
+        firsts[f] = (firsts[f] || 0) + 1;
+      });
+      D.players.forEach((p) => {
+        const parts = p.name.split(" ");
+        SHORT[p.id] = firsts[parts[0]] > 1 ? `${parts[0]} ${(parts[1] || "")[0] || ""}.` : parts[0];
+      });
+      D.pairs.forEach((p) => (PAIR[pairKey(p.a, p.b)] = p));
+      $("#sub").textContent = `${D.division} · ${D.season}`;
+      $("#foot").innerHTML = `Showing the <b>Frog ${esc(level)}</b> team. Data from <a href="https://www.crossclubpickleball.com/leagues/dashboard" target="_blank" rel="noopener">crossclubpickleball.com</a>
+        and the <a href="${esc(D.sheetUrl)}" target="_blank" rel="noopener">team availability sheet (${esc(level)} tab)</a>.
+        Updated ${new Date(D.generated).toLocaleString()}. Refreshes automatically every few hours.`;
+      route();
+    })
+    .catch((e) => ($("#app").innerHTML = `<div class="alert bad">Couldn't load the ${esc(level)} team (${esc(e.message)}).</div>`));
+}
+
+fetch("teams.json?v=" + Date.now())
+  .then((r) => (r.ok ? r.json() : null))
+  .catch(() => null)
+  .then((t) => {
+    if (t && t.teams && t.teams.length) TEAMS = t.teams;
     window.addEventListener("hashchange", route);
-    route();
-  })
-  .catch((e) => ($("#app").innerHTML = `<div class="alert bad">Couldn't load data.json (${esc(e.message)}).</div>`));
+    loadTeam(pickTeam());
+  });
 
 function route() {
   const [tab, arg, arg2] = (location.hash.slice(1) || "home").split("/");

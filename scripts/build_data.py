@@ -26,15 +26,18 @@ from datetime import datetime, timezone
 
 # ---------------------------------------------------------------- config
 REGION = "Chicago"
-DIVISION = "3.0"
+# Each Frog team: division name -> Google Sheet tab (gid). One dashboard per entry.
+TEAMS = {"3.0": "993438883", "3.5": "0"}
+DIVISION = "3.0"   # set per team by run_all()
 TEAM = "Frog Pickleball"
 SHEET_ID = "1oryl5QhVVxbcyqrzd3Kizk7UMgui8Beq1uzTcYPBBPA"
-SHEET_GID = "993438883"  # the "3.0" tab
+SHEET_GID = TEAMS[DIVISION]
 API = "https://cplsecureapiproxy.azurewebsites.net/api/CPLSecureApiProxy/v0/api"
 
 # Sheet name -> CPL "First Last" when automatic matching gets it wrong.
 ALIASES = {
     # "Sheet Name": "Cpl Name",
+    "Da Zhi (Sub)": "Dazhi Chen",
 }
 
 RIDGE = 7.0      # how strongly ratings shrink toward average (bigger = more cautious)
@@ -478,7 +481,7 @@ def main():
 
     data = {
         "generated": datetime.now(timezone.utc).isoformat(timespec="minutes"),
-        "team": TEAM, "division": f"{REGION} {DIVISION}", "season": season_label,
+        "team": TEAM, "level": DIVISION, "division": f"{REGION} {DIVISION}", "season": season_label,
         "scoringRule": scoring_rule, "scoringEvidence": {"disagreements": decided, "byPoints": by_points, "byGames": by_games},
         "model": {"ridge": RIDGE, "pairShrink": PAIR_SHRINK, "sigma": sigma, "residSd": round(resid_sd, 2), "oosAccuracy": oos_acc, "calibration": calib, "games": len(games), "duprFit": dupr_fit},
         "standings": out_stand, "schedule": sched, "players": out_players, "pairs": pair_list,
@@ -494,9 +497,9 @@ def main():
     data["insights"] = insights(data, sigma)
 
     os.makedirs(os.path.join(ROOT, "site"), exist_ok=True)
-    with open(os.path.join(ROOT, "site", "data.json"), "w") as f:
+    with open(os.path.join(ROOT, "site", f"data-{DIVISION}.json"), "w") as f:
         json.dump(data, f, separators=(",", ":"))
-    print(f"Wrote site/data.json: {len(games)} division games, {len(fgames)} Frog games, "
+    print(f"Wrote site/data-{DIVISION}.json: {len(games)} division games, {len(fgames)} Frog games, "
           f"{len(out_players)} players, {len(pair_list)} pairs, scoring rule = {scoring_rule}")
     if unmatched:
         print("  Sheet names not matched to CPL:", ", ".join(unmatched))
@@ -696,5 +699,17 @@ def insights(d, sigma):
     return out
 
 
+def run_all():
+    global DIVISION, SHEET_GID
+    index = []
+    for div, gid in TEAMS.items():
+        DIVISION, SHEET_GID = div, gid
+        print(f"===== Frog {div} =====")
+        main()
+        index.append(div)
+    with open(os.path.join(ROOT, "site", "teams.json"), "w") as f:
+        json.dump({"teams": index, "default": index[0]}, f)
+
+
 if __name__ == "__main__":
-    main()
+    run_all()

@@ -3,18 +3,27 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Frog Pickleball · CPL 3.0 Team Hub</title>
+<title>Frog Pickleball · CPL Team Hub</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🐸</text></svg>">
 <link rel="stylesheet" href="style.css?v=__V__">
 </head>
 <body>
+<script>
+  // Set the team color before anything draws, so the 3.5 page never flashes the 3.0 color.
+  (function () {
+    var q = new URLSearchParams(location.search).get("team");
+    var t = q || localStorage.getItem("frogTeam") || "3.0";
+    document.body.dataset.team = t;
+  })();
+</script>
 <header class="top">
   <div class="brand">
     <span class="logo" aria-hidden="true">🐸</span>
-    <div>
-      <h1>Frog Pickleball</h1>
-      <p class="sub" id="sub">CPL 3.0 team hub</p>
+    <div class="brandtext">
+      <h1>Frog Pickleball <span class="teambadge" id="teamname">…</span></h1>
+      <p class="sub" id="sub">CPL team hub</p>
     </div>
+    <div class="teamswitch" id="teamswitch" role="group" aria-label="Choose team"></div>
   </div>
   <nav class="tabs" role="tablist">
     <a href="#home" data-tab="home">Home</a>
