@@ -201,7 +201,7 @@ function home() {
 }
 
 /* ------------------------------------------------------------ GAME PLAN (lineup builder) */
-const LU = { week: null, sel: null, selWeek: null, mode: "even" };
+const LU = { week: null, sel: null, selWeek: null, mode: "even" }; // mode fixed: 6-game minimum leaves almost no room for a "max wins" variant
 const MIN_GAMES = 6; // team rule: everyone plays at least 6 of 8 games
 const MAX_FOR_MIN = Math.floor(32 / MIN_GAMES); // each gender has 32 game spots per match -> 5 players
 const TYPE_LABEL = { mixed: "Mixed", female: "Women's", male: "Men's" };
@@ -269,12 +269,8 @@ function lineup(arg, auto) {
       </div>
       ${status}
       ${ourPosted ? `<div class="alert good">Our lineup on CPL: ${ourPosted} of 32 games filled in.</div>` : ""}
-      <div class="row" style="margin-top:6px">
-        <span class="seg" id="luMode">
-          <button data-m="even" class="${LU.mode === "even" ? "on" : ""}" data-tip="Everyone of the same gender plays within 1 game of each other, minimum ${MIN_GAMES} games">Equal playing time</button>
-          <button data-m="win" class="${LU.mode === "win" ? "on" : ""}" data-tip="Ignores playing time, still at least ${MIN_GAMES} games each">Max wins</button>
-        </span>
-      </div>
+      <p class="small muted" style="margin:10px 0 0">Everyone plays at least ${MIN_GAMES} of the 8 games, and same-gender teammates stay within 1 game of each other.
+        With 4 men + 4 women everyone plays all 8.</p>
       <p class="small muted" style="margin:10px 0 0">Tick who's playing (up to 6 men and 6 women). <b>In</b> players from the sheet are pre-checked.</p>
       <div id="luPick" style="margin-top:8px"></div>
       <div class="row" style="margin-top:14px"><button class="btn" id="luGo">Build lineup</button>
@@ -335,12 +331,6 @@ function lineup(arg, auto) {
   }
   $("#luFill").addEventListener("click", fillGaps);
   $("#luWeek").addEventListener("change", (e) => (location.hash = "#lineup/" + e.target.value));
-  box.querySelectorAll("#luMode button").forEach((b) =>
-    b.addEventListener("click", () => {
-      LU.mode = b.dataset.m;
-      box.querySelectorAll("#luMode button").forEach((x) => x.classList.toggle("on", x === b));
-    })
-  );
   $("#luGo").addEventListener("click", () => {
     const men = [...LU.sel].filter(isMale), women = [...LU.sel].filter((id) => !isMale(id));
     $("#luOut").innerHTML = `<p class="muted">Trying thousands of combinations…</p>`;
