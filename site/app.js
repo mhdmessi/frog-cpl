@@ -663,7 +663,10 @@ function scouting(arg) {
   section(`<div class="grid g3" style="margin-top:12px">
       <div class="card stat"><div class="num">${esc(st.record || "–")}</div><div class="lbl">Their record · #${esc(st.rank ?? "–")} in league</div></div>
       <div class="card stat"><div class="num">${upcoming.length ? fmtDate(upcoming[0].time, false) : "–"}</div><div class="lbl">${upcoming.length ? `Next meeting (${upcoming[0].home ? "home" : "away"}) · <a href="#lineup/${upcoming[0].week}">game plan →</a>` : "No more meetings scheduled"}</div></div>
-      <div class="card stat"><div class="num">${sc.h2h.length ? sc.h2h.map((h) => h.result).join(" ") : "–"}</div><div class="lbl">Head to head this season</div></div>
+      <div class="card stat">${sc.h2h.length
+        ? sc.h2h.map((h) => `<div class="num ${h.result === "W" ? "pos" : "neg"}" style="font-size:24px">${h.result === "W" ? "Won" : "Lost"} ${h.usGames}–${h.themGames}</div>
+            <div class="lbl">Week ${h.week} vs them · games won (points ${h.us}–${h.them})</div>`).join("")
+        : `<div class="num" style="font-size:24px">Not played yet</div><div class="lbl">Our results vs them this season</div>`}</div>
     </div>
     <h2>Key takeaways</h2>
     <div class="grid g2">${sc.notes.map((n) => `<div class="card insight tip">${esc(n)}</div>`).join("")}</div>
