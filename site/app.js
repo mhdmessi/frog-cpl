@@ -222,7 +222,7 @@ function home() {
           <div><div class="tag">NO REPLY — REGULARS (${noReply.length})</div><div class="chips">${noReply.map((id) => `<span class="pill none">${label(id)}</span>`).join("") || "<span class='muted'>–</span>"}</div></div>
         </div>
         <div class="row" style="margin-top:14px">
-          <a class="btn" href="#lineup/${nm.week}" style="text-decoration:none">Build the game plan →</a>
+          <a class="btn" href="#lineup/${nm.week}" style="text-decoration:none">See the recommended lineup →</a>
           <a class="btn ghost" href="#scouting/${encodeURIComponent(nm.opp)}" style="text-decoration:none">Scout ${esc(nm.opp.replace("Pickleball Kingdom North Aurora", "PK N. Aurora"))}</a>
         </div>
       </div>`);
@@ -270,12 +270,56 @@ function lname(id) {
   return LSHORT[id] || "?";
 }
 
+/* ---- Manually entered opponent lineup (backup if CPL's public data doesn't show it before we set ours) */
+const manualKey = (mid) => `frogOppLineup:${mid}`;
+function loadManual(mid) {
+  try {
+    return JSON.parse(localStorage.getItem(manualKey(mid))) || [];
+  } catch {
+    return [];
+  }
+}
+function saveManual(mid, arr) {
+  localStorage.setItem(manualKey(mid), JSON.stringify(arr));
+}
+
+function manualEditorHTML(wk) {
+  const auto = D.posted[wk.matchupId]?.them || [];
+  const manual = loadManual(wk.matchupId);
+  const roster = Object.entries(D.league).filter(([, p]) => p.t === wk.opp).sort((a, b) => a[1].n.localeCompare(b[1].n));
+  const opts = (g, sel) => `<option value="">—</option>` + roster.filter(([, p]) => p.g === g)
+    .map(([id, p]) => `<option value="${id}" ${id === sel ? "selected" : ""}>${esc(p.n)}</option>`).join("");
+  const filled = Array.from({ length: 32 }, (_, n) => auto[n] || (manual[n] && manual[n][0] && manual[n][1])).filter(Boolean).length;
+  let rows = "";
+  for (let r = 0; r < 8; r++) {
+    rows += `<div class="card round"><h3>Round ${r + 1} <span class="tag">· ${r % 2 === 0 ? "Mixed" : "Women's + Men's"}</span></h3>`;
+    for (let n = r * 4; n < r * 4 + 4; n++) {
+      const t = gameType(n);
+      const g1 = t === "male" ? "M" : "W", g2 = t === "female" ? "W" : "M";
+      const cur = auto[n] || manual[n] || [];
+      const lock = auto[n] ? "disabled" : "";
+      rows += `<div class="row" style="gap:6px;margin:6px 0"><span class="tag" style="width:62px">G${n + 1} ${TYPE_LABEL[t]}</span>
+        <select data-n="${n}" data-i="0" ${lock}>${opts(g1, cur[0])}</select><select data-n="${n}" data-i="1" ${lock}>${opts(g2, cur[1])}</select></div>`;
+    }
+    rows += `</div>`;
+  }
+  return `<details class="card" id="manualBox" style="margin-top:12px" ${filled && filled < 32 ? "open" : ""}>
+    <summary>✍️ Enter their lineup by hand <span class="tag">(${filled} of 32 games known)</span></summary>
+    <p class="small muted">Backup for when you can see their lineup on CPL (logged in) before this site picks it up. Copy each game's pair from CPL's scorecard.
+      Saved on this device only. Games CPL already shows are filled in automatically and locked.</p>
+    <div class="grid gsc">${rows}</div>
+    <div class="row" style="margin-top:10px"><button class="btn ghost" id="manualClear">Clear what I entered</button></div>
+  </details>`;
+}
+
 /** Chance our pair (strength v) beats the opponent in game slot x (averaged over their likely pairs). */
 const slotProb = (v, x) => x.vals.reduce((a, o) => a + winProb(v - o), 0) / x.vals.length;
 
 /** Opponent strength for each of the 32 games: their posted pair if known, else their typical pair for that game type. */
 function oppPlan(wk) {
-  const posted = D.posted[wk.matchupId]?.them || [];
+  const auto = D.posted[wk.matchupId]?.them || [];
+  const manual = loadManual(wk.matchupId);
+  const posted = Array.from({ length: 32 }, (_, n) => auto[n] || (manual[n] && manual[n][0] && manual[n][1] ? manual[n] : null));
   const ts = D.typeStrength[wk.opp] || {}, td = D.typeDist?.[wk.opp] || {};
   const plan = Array.from({ length: 32 }, (_, n) => {
     const pr = posted[n];
@@ -304,7 +348,7 @@ function lineup(arg, auto) {
     LU.sel = new Set(D.players.filter((p) => availFor(wk, p.id) === "yes").map((p) => p.id));
     LU.selWeek = LU.week;
   }
-  const plan = oppPlan(wk);
+  let plan = oppPlan(wk);
   const nKnown = plan.filter((x) => x.known).length;
   const ourPosted = (D.posted[wk.matchupId]?.us || []).filter(Boolean).length;
   const deadline = wk.home
@@ -332,14 +376,37 @@ function lineup(arg, auto) {
       ${ourPosted ? `<div class="alert good">Our lineup on CPL: ${ourPosted} of 32 games filled in.</div>` : ""}
       <p class="small muted" style="margin:10px 0 0">Everyone plays at least ${MIN_GAMES} of the 8 games, and same-gender teammates stay within 1 game of each other.
         With 4 men + 4 women everyone plays all 8.</p>
-      <p class="small muted" style="margin:10px 0 0">Tick who's playing (up to 6 men and 6 women). <b>In</b> players from the sheet are pre-checked.</p>
+      <p class="small muted" style="margin:10px 0 0"><b>Automatic:</b> everyone marked <b>In</b> on the sheet is checked, gaps are filled from Maybes then subs, and the best lineup is built below.
+        Change any box and it rebuilds. Same data → same lineup for everyone.</p>
       <div id="luPick" style="margin-top:8px"></div>
-      <div class="row" style="margin-top:14px"><button class="btn" id="luGo">Build lineup</button>
+      <div class="row" style="margin-top:14px"><button class="btn" id="luGo">Rebuild</button>
         <button class="btn ghost" id="luFill" hidden data-tip="Adds Maybes first, then the strongest subs who haven't replied. Never adds anyone marked Out.">Fill the gaps</button>
         <span id="luCount" class="muted"></span></div>
       <div id="luFillNote"></div>
     </div>
+    <div id="manualWrap">${manualEditorHTML(wk)}</div>
     <div id="luOut"></div><div id="luPairs"></div>`);
+  const wireManual = () => {
+    const wrap = $("#manualWrap");
+    wrap.querySelectorAll("select").forEach((sel) =>
+      sel.addEventListener("change", () => {
+        const arr = loadManual(wk.matchupId);
+        const n = Number(sel.dataset.n), i = Number(sel.dataset.i);
+        arr[n] = arr[n] || [null, null];
+        arr[n][i] = sel.value || null;
+        saveManual(wk.matchupId, arr);
+        const fresh = oppPlan(wk); // refresh the plan in place
+        for (let k = 0; k < 32; k++) plan[k] = fresh[k];
+        plan.counter = fresh.counter; plan.pools = fresh.pools;
+        wrap.querySelector("summary .tag").textContent = `(${fresh.filter((x) => x.known).length} of 32 games known)`;
+      })
+    );
+    $("#manualClear").addEventListener("click", () => {
+      localStorage.removeItem(manualKey(wk.matchupId));
+      location.hash = "#lineup/" + wk.week + "/" + Date.now(); // re-render
+    });
+  };
+  wireManual();
 
   let lastChecked = null;
   function drawPick() {
@@ -364,12 +431,14 @@ function lineup(arg, auto) {
         i.checked ? LU.sel.add(i.dataset.id) : LU.sel.delete(i.dataset.id);
         lastChecked = i.checked ? i.dataset.id : null;
         drawPick();
+        scheduleBuild();
       })
     );
     const m = [...LU.sel].filter(isMale).length, w = LU.sel.size - m;
     const over = [m > MAX_FOR_MIN ? `${m} men` : "", w > MAX_FOR_MIN ? `${w} women` : ""].filter(Boolean).join(" and ");
-    $("#luCount").innerHTML = `${m} men · ${w} women` + (m < 4 || w < 4 ? ` — <b class="neg">need at least 4 + 4</b>` : m > 6 || w > 6 ? ` — <b class="neg">max 6 + 6</b>` : over ? ` — <b class="neg">with ${over}, not everyone can get ${MIN_GAMES} games (each gender has only 32 game spots). 5 + 5 is the max for ${MIN_GAMES}+ each.</b>` : "");
-    $("#luGo").disabled = m < 4 || w < 4 || m > 6 || w > 6;
+    $("#luCount").innerHTML = `${m} men · ${w} women` + (m < 4 || w < 4 ? ` — <b class="neg">need at least 4 + 4</b>`
+      : over ? ` — ${over} available, so the plan sits out ${[m > MAX_FOR_MIN ? m - MAX_FOR_MIN + (m - MAX_FOR_MIN > 1 ? " men" : " man") : "", w > MAX_FOR_MIN ? w - MAX_FOR_MIN + (w - MAX_FOR_MIN > 1 ? " women" : " woman") : ""].filter(Boolean).join(" and ")} to keep everyone else at ${MIN_GAMES}+ games` : "");
+    $("#luGo").disabled = m < 4 || w < 4;
     $("#luFill").hidden = !(m < 4 || w < 4);
     showTopPairs([...LU.sel], lastChecked);
   }
@@ -392,13 +461,25 @@ function lineup(arg, auto) {
   }
   $("#luFill").addEventListener("click", fillGaps);
   $("#luWeek").addEventListener("change", (e) => (location.hash = "#lineup/" + e.target.value));
-  $("#luGo").addEventListener("click", () => {
+  let buildTimer = null;
+  const build = () => {
+    if ($("#luGo").disabled) {
+      $("#luOut").innerHTML = `<div class="alert bad">Need at least 4 men and 4 women checked to build a lineup.</div>`;
+      return;
+    }
     const men = [...LU.sel].filter(isMale), women = [...LU.sel].filter((id) => !isMale(id));
-    $("#luOut").innerHTML = `<p class="muted">Trying thousands of combinations…</p>`;
-    setTimeout(() => showLineup(optimize(men, women, { mode: LU.mode, plan }), wk, plan), 20);
-  });
-  if (auto === "fill" && !$("#luFill").hidden) fillGaps();
-  if ((auto === "go" || auto === "fill") && !$("#luGo").disabled) $("#luGo").click();
+    $("#luOut").innerHTML = `<p class="muted">⏳ Building the best lineup…</p>`;
+    const seed = `${wk.matchupId}|${plan.filter((x) => x.known).length}`;
+    setTimeout(() => showLineup(autoLineup(men, women, { mode: LU.mode, plan, seed }), wk, plan, [...LU.sel]), 20);
+  };
+  const scheduleBuild = () => {
+    clearTimeout(buildTimer);
+    buildTimer = setTimeout(build, 700);
+  };
+  $("#luGo").addEventListener("click", build);
+  // Automatic: fill gaps if we're short, then build right away — no clicks needed.
+  if (!$("#luFill").hidden) fillGaps();
+  build();
 }
 
 function showTopPairs(ids, focus) {
@@ -440,7 +521,52 @@ const PERMS4 = (() => {
   return out;
 })();
 
-function optimize(men, women, { mode, plan }) {
+/** Small seeded random generator so the same inputs always give the same lineup (everyone sees the same plan). */
+function seededRng(seedStr) {
+  let h = 1779033703 ^ seedStr.length;
+  for (let i = 0; i < seedStr.length; i++) {
+    h = Math.imul(h ^ seedStr.charCodeAt(i), 3432918353);
+    h = (h << 13) | (h >>> 19);
+  }
+  let a = h >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/**
+ * Pick who plays (max 5 per gender so everyone gets 6+), then build the lineup.
+ * Sit-out candidates = the lowest-rated few; each option gets a quick build and the best one gets the full build.
+ */
+function autoLineup(men, women, opts) {
+  const choose = (arr, k) => (k === 0 ? [[]] : arr.flatMap((x, i) => choose(arr.slice(i + 1), k - 1).map((c) => [x, ...c])));
+  const sitOptions = (g) => {
+    const extra = g.length - MAX_FOR_MIN;
+    if (extra <= 0) return [[]];
+    const r = (id) => (P[id] ? P[id].rating : -1) || 0;
+    const pool = [...g].sort((a, b) => r(a) - r(b)).slice(0, extra + 2);
+    return choose(pool, extra);
+  };
+  const mOpts = sitOptions(men), wOpts = sitOptions(women);
+  if (mOpts.length * wOpts.length === 1) return optimize(men, women, opts);
+  let best = null;
+  for (const sm of mOpts)
+    for (const sw of wOpts) {
+      const m = men.filter((x) => !sm.includes(x)), w = women.filter((x) => !sw.includes(x));
+      const q = optimize(m, w, { ...opts, quick: true });
+      if (!best || q.s.val > best.val) best = { val: q.s.val, m, w };
+    }
+  return optimize(best.m, best.w, opts);
+}
+
+function optimize(men, women, { mode, plan, seed = "frog", quick = false }) {
+  men = [...men].sort();
+  women = [...women].sort();
+  const rng = seededRng(seed + "|" + men.join(",") + "|" + women.join(","));
   const cache = new Map();
   const wp = (a, b, n) => {
     const k = pairKey(a, b) + "#" + n;
@@ -473,7 +599,7 @@ function optimize(men, women, { mode, plan }) {
     }
     return worst;
   };
-  const rand = (n) => Math.floor(Math.random() * n);
+  const rand = (n) => Math.floor(rng() * n);
   const shuffle = (a) => {
     a = [...a];
     for (let i = a.length - 1; i > 0; i--) {
@@ -509,9 +635,14 @@ function optimize(men, women, { mode, plan }) {
     if (!plan.counter) tot = typical;
     let pen = 0;
     for (const g of [men, women]) {
-      const n = g.map((id) => gc.get(id) || 0);
-      for (const x of n) if (x < MIN_GAMES) pen += (MIN_GAMES - x) ** 2 * 2; // everyone plays at least MIN_GAMES; shortfalls get spread out
-      if (mode === "even") {
+      // More than 5 available: the extras sit out (5 is the most that still gives everyone 6+ of the 32 spots).
+      // The search decides who sits by what wins the most games.
+      const allowedBench = Math.max(0, g.length - MAX_FOR_MIN);
+      const counts = g.map((id) => gc.get(id) || 0).sort((a, b) => a - b);
+      let excused = 0;
+      const n = counts.filter((x) => (x === 0 && excused < allowedBench ? (excused++, false) : true));
+      for (const x of n) if (x < MIN_GAMES) pen += (MIN_GAMES - x) ** 2 * 2; // everyone who plays gets 6+; shortfalls get spread out
+      if (mode === "even" && n.length) {
         const spread = Math.max(...n) - Math.min(...n);
         if (spread > 1) pen += (spread - 1) * 1.0;
       }
@@ -525,7 +656,7 @@ function optimize(men, women, { mode, plan }) {
     const pool = g === "mx" || g === "mm" ? men : women;
     const i = rand(4);
     const bench = pool.filter((x) => !arr.includes(x));
-    if (bench.length && Math.random() < 0.4) arr[i] = bench[rand(bench.length)];
+    if (bench.length && rng() < 0.4) arr[i] = bench[rand(bench.length)];
     else {
       let j = rand(4);
       if (j === i) j = (i + 1 + rand(3)) % 4;
@@ -533,15 +664,15 @@ function optimize(men, women, { mode, plan }) {
     }
   }
   let best = null;
-  for (let restart = 0; restart < 6; restart++) {
+  for (let restart = 0; restart < (quick ? 2 : 6); restart++) {
     let cur = fresh(), cs = score(cur);
-    const N = 15000;
+    const N = quick ? 5000 : 15000;
     for (let it = 0; it < N; it++) {
       const T = 0.4 * Math.pow(0.01, it / N);
       const nx = copy(cur);
       mutate(nx);
       const ns = score(nx);
-      if (ns.val >= cs.val || Math.random() < Math.exp((ns.val - cs.val) / T)) (cur = nx), (cs = ns);
+      if (ns.val >= cs.val || rng() < Math.exp((ns.val - cs.val) / T)) (cur = nx), (cs = ns);
       if (!best || cs.val > best.s.val) best = { lineup: copy(cur), s: cs };
     }
   }
@@ -578,8 +709,9 @@ function rosterHTML(ids, counts, title) {
   return `<div class="card"><h3>${esc(title)}</h3><table class="sc"><tbody>${list(true)}${list(false)}</tbody></table></div>`;
 }
 
-function showLineup(best, wk, plan) {
+function showLineup(best, wk, plan, selected = []) {
   const { lineup: L, s } = best;
+  const sitting = selected.filter((id) => !s.gc.get(id));
   const games = [];
   L.forEach((r, ri) => {
     const base = ri * 8;
@@ -613,7 +745,8 @@ function showLineup(best, wk, plan) {
     </div>
     ${s.pen > 0.01 ? `<div class="alert warn">With this group, not every playing-time goal could be met (everyone ${MIN_GAMES}+ games, within 1 of each other) — check the games-per-player counts.</div>` : ""}
     <div class="row" style="margin:12px 0"><button class="btn ghost" id="luCopy">Copy lineup as text</button>
-      <button class="btn ghost" id="luAgain">Try another version</button></div>
+</div>
+    ${sitting.length ? `<div class="alert warn">🪑 <b>Sitting out:</b> ${sitting.map((id) => esc(lname(id))).join(", ")} — more players are in than can each get ${MIN_GAMES} games, and this choice wins the most games. Uncheck someone else if you'd rather they sit.</div>` : ""}
     <h3 style="margin-top:16px">Rosters</h3>
     <div class="grid g2">${rosterHTML(Object.keys(counts), counts, "Frog Pickleball")}${theirIds.length ? rosterHTML(theirIds, theirCounts, wk.opp) : `<div class="card"><h3>${esc(wk.opp)}</h3><p class="muted">Their roster appears here once they post their lineup.</p></div>`}</div>
     <h3 style="margin-top:16px">Scorecard</h3>
@@ -621,7 +754,7 @@ function showLineup(best, wk, plan) {
     <p class="small muted">Win chances are estimates from this season's results. Enter the pairs into CPL's lineup page game by game (Game 1 = first row).
       ${plan.counter ? "Win % per game is vs their usual pairs; since they see our lineup first, expect them to move their best pairs around." : ""}</p>`;
   $("#luCopy").addEventListener("click", (e) => navigator.clipboard.writeText(text).then(() => (e.target.textContent = "Copied ✓")));
-  $("#luAgain").addEventListener("click", () => $("#luGo").click());
+
 }
 
 /* ------------------------------------------------------------ PLAYERS */
@@ -854,6 +987,8 @@ function about() {
       It's shrunk toward 0 for pairs with only a game or two.</p>
     <h3>Game Plan (lineup builder)</h3>
     <p>CPL matches are 32 games: 8 rounds of 4 games, one game per court. Rounds 1, 3, 5, 7 are 4 mixed games; rounds 2, 4, 6, 8 are 2 women's + 2 men's games. Each player plays at most once per round, so 8 games is the max.
+      <b>It's automatic:</b> it starts from everyone marked In on the sheet, fills any gap from Maybes then subs (flagged so you can confirm), and if more than 5 men or 5 women are in, it sits out whoever
+      helps least so everyone else still gets 6+ games. The same data always gives the same lineup, so every teammate sees the same plan.
       The builder tries tens of thousands of lineups and keeps the one with the most expected game wins, while keeping playing time nearly equal (same-gender teammates within 1 game, everyone at least ${MIN_GAMES} of the 8 possible games — so 5 men + 5 women is the most you can bring and still give everyone 6).
       Lineup timing: the <b>away</b> team locks its lineup by Thu 8pm; the <b>home</b> team sees it and sets theirs by Fri 8pm, deciding who plays whom.
       When we're <b>home</b>, the site picks up their locked lineup within an hour (it checks hourly Thu–Sat) and matches each of our pairs against the exact pair they'll face.
