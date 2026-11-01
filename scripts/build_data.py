@@ -217,6 +217,12 @@ def main():
             best = (sigma_try, ll)
     sigma = best[0]
     resid_sd = math.sqrt(sum((a - pm) ** 2 for pm, a in oos) / len(oos))
+    calib = []
+    for lo in (0.5, 0.6, 0.7, 0.8, 0.9):
+        sel = [(pm, act) for pm, act in oos if lo <= max(win_prob(pm, sigma), 1 - win_prob(pm, sigma)) < lo + 0.1]
+        if sel:
+            hit = sum((pm > 0) == (act > 0) for pm, act in sel)
+            calib.append({"band": f"{int(lo * 100)}-{int(lo * 100) + 10}%", "n": len(sel), "actual": round(100 * hit / len(sel), 1)})
     oos_acc = round(100 * sum((pm > 0) == (a > 0) for pm, a in oos if pm != 0) / max(1, sum(pm != 0 for pm, _ in oos)), 1)
 
     # players with no CPL games yet: estimate from DUPR (fit across the division)
@@ -474,7 +480,7 @@ def main():
         "generated": datetime.now(timezone.utc).isoformat(timespec="minutes"),
         "team": TEAM, "division": f"{REGION} {DIVISION}", "season": season_label,
         "scoringRule": scoring_rule, "scoringEvidence": {"disagreements": decided, "byPoints": by_points, "byGames": by_games},
-        "model": {"ridge": RIDGE, "pairShrink": PAIR_SHRINK, "sigma": sigma, "residSd": round(resid_sd, 2), "oosAccuracy": oos_acc, "games": len(games), "duprFit": dupr_fit},
+        "model": {"ridge": RIDGE, "pairShrink": PAIR_SHRINK, "sigma": sigma, "residSd": round(resid_sd, 2), "oosAccuracy": oos_acc, "calibration": calib, "games": len(games), "duprFit": dupr_fit},
         "standings": out_stand, "schedule": sched, "players": out_players, "pairs": pair_list,
         "games": [{**g, "them": [full_name(pmap[x]) if x in pmap else "?" for x in g["them"]]} for g in fgames],
         "allPairs": all_pairs, "typeStrength": type_strength, "typeDist": type_dist,

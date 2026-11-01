@@ -231,11 +231,20 @@ const slotProb = (v, x) => x.vals.reduce((a, o) => a + winProb(v - o), 0) / x.va
 function oppPlan(wk) {
   const posted = D.posted[wk.matchupId]?.them || [];
   const ts = D.typeStrength[wk.opp] || {}, td = D.typeDist?.[wk.opp] || {};
-  return Array.from({ length: 32 }, (_, n) => {
+  const plan = Array.from({ length: 32 }, (_, n) => {
     const pr = posted[n];
     if (pr) return { pair: pr, vals: [pairVal(pr[0], pr[1])], known: true };
     return { pair: null, vals: td[gameType(n)] || [ts[gameType(n)] ?? 0], known: false };
   });
+  // Away team locks first (Thu 8pm); the home team sees it and decides who plays whom.
+  // So when we're away and they haven't posted, assume they'll counter-pick our lineup.
+  plan.counter = !wk.home && !plan.some((x) => x.known);
+  const pick = (t, idx) => {
+    const d = td[t] || [ts[t] ?? 0];
+    return idx.map((i) => d[Math.min(d.length - 1, Math.floor((i * d.length) / 13))]);
+  };
+  plan.pools = { mixed: pick("mixed", [1, 4, 8, 11]), female: pick("female", [3, 9]), male: pick("male", [3, 9]) };
+  return plan;
 }
 
 function lineup(arg, auto) {
@@ -252,12 +261,18 @@ function lineup(arg, auto) {
   const plan = oppPlan(wk);
   const nKnown = plan.filter((x) => x.known).length;
   const ourPosted = (D.posted[wk.matchupId]?.us || []).filter(Boolean).length;
+  const deadline = wk.home
+    ? `<div class="alert good">🏠 <b>We're home.</b> ${esc(wk.opp)} (away) must lock their lineup by <b>Thu 8pm</b>; we set ours by <b>Fri 8pm</b> after seeing theirs — and we decide who plays whom.</div>`
+    : `<div class="alert warn">🚗 <b>We're away.</b> Our lineup is due <b>Thu 8pm</b>, and ${esc(wk.opp)} (home) sees it before setting theirs by Fri 8pm — they decide who plays whom.
+        So this plan is built to hold up <b>even if they counter-pick</b> us, not tuned to a lineup we can't see.</div>`;
   const status = nKnown === 32
-    ? `<div class="alert good">✅ <b>${esc(wk.opp)} has posted their lineup.</b> The plan below matches our pairs against theirs game by game.</div>`
+    ? `<div class="alert good">✅ <b>${esc(wk.opp)}'s lineup is in.</b> The plan matches our pairs against theirs game by game.</div>`
     : nKnown > 0
-    ? `<div class="alert warn">⏳ ${esc(wk.opp)} has posted ${nKnown} of 32 games so far. Known games are matched directly; the rest use their typical pairs.</div>`
-    : `<div class="alert warn">⏳ <b>${esc(wk.opp)} hasn't posted their lineup yet</b> (usually 1–2 days before the match). For now each game is planned against their <i>typical</i> mixed / women's / men's pair.
-        This page checks CPL every hour from Thursday to Saturday, so come back once their lineup is up and press <b>Build</b> again to get a lineup tuned to theirs.</div>`;
+    ? `<div class="alert warn">⏳ ${esc(wk.opp)} has entered ${nKnown} of 32 games so far. Known games are matched directly; the rest use their typical pairs.</div>`
+    : wk.home
+    ? `<div class="alert warn">⏳ Their lineup isn't in yet. This page checks CPL hourly Thu–Sat — after Thu 8pm, reload and press <b>Build</b> to counter their exact lineup.</div>`
+    : "";
+  const statusAll = deadline + status;
 
   const box = section(`
     <h2>Game Plan</h2>
@@ -267,7 +282,7 @@ function lineup(arg, auto) {
           .map((s) => `<option value="${s.week}" ${s.week === LU.week ? "selected" : ""}>Week ${s.week} · ${fmtDate(s.time, false)} · ${s.home ? "vs" : "@"} ${esc(s.opp)}</option>`)
           .join("")}</select></label>
       </div>
-      ${status}
+      ${statusAll}
       ${ourPosted ? `<div class="alert good">Our lineup on CPL: ${ourPosted} of 32 games filled in.</div>` : ""}
       <p class="small muted" style="margin:10px 0 0">Everyone plays at least ${MIN_GAMES} of the 8 games, and same-gender teammates stay within 1 game of each other.
         With 4 men + 4 women everyone plays all 8.</p>
@@ -371,12 +386,46 @@ function showTopPairs(ids, focus) {
  * Internally each "block" here = one mixed round + the gender round after it.
  * Maximises expected games won against the opponent's plan (posted pairs or typical strength).
  */
+const PERMS2 = [[0, 1], [1, 0]];
+const PERMS4 = (() => {
+  const out = [];
+  const go = (pre, rest) => (rest.length ? rest.forEach((x, i) => go([...pre, x], rest.filter((_, j) => j !== i))) : out.push(pre));
+  go([], [0, 1, 2, 3]);
+  return out;
+})();
+
 function optimize(men, women, { mode, plan }) {
   const cache = new Map();
   const wp = (a, b, n) => {
     const k = pairKey(a, b) + "#" + n;
     if (!cache.has(k)) cache.set(k, slotProb(pairVal(a, b), plan[n]));
     return cache.get(k);
+  };
+  const pvCache = new Map();
+  const pv = (a, b) => {
+    const k = pairKey(a, b);
+    if (!pvCache.has(k)) pvCache.set(k, pairVal(a, b));
+    return pvCache.get(k);
+  };
+  // Home captain's best response: assign their pairs to our games to win as many as possible.
+  const crCache = new Map();
+  const counterRound = (ours, pool) => {
+    const key = ours.map((x) => x.toFixed(2)).sort().join(",") + "|" + pool.join(",");
+    const hit = crCache.get(key);
+    if (hit !== undefined) return hit;
+    const v = counterRoundRaw(ours, pool);
+    crCache.set(key, v);
+    return v;
+  };
+  const counterRoundRaw = (ours, pool) => {
+    const perms = ours.length === 4 ? PERMS4 : PERMS2;
+    let worst = Infinity;
+    for (const p of perms) {
+      let sum = 0;
+      for (let i = 0; i < ours.length; i++) sum += winProb(ours[i] - pool[p[i]]);
+      if (sum < worst) worst = sum;
+    }
+    return worst;
   };
   const rand = (n) => Math.floor(Math.random() * n);
   const shuffle = (a) => {
@@ -390,19 +439,28 @@ function optimize(men, women, { mode, plan }) {
   const fresh = () => Array.from({ length: 4 }, () => ({ mx: shuffle(men).slice(0, 4), mw: shuffle(women).slice(0, 4), mm: shuffle(men).slice(0, 4), ww: shuffle(women).slice(0, 4) }));
   const copy = (s) => s.map((r) => ({ mx: [...r.mx], mw: [...r.mw], mm: [...r.mm], ww: [...r.ww] }));
   function score(s) {
-    let tot = 0;
+    let tot = 0, typical = 0;
     const gc = new Map();
-    const add = (a, b, n) => {
-      tot += wp(a, b, n);
+    const count = (a, b) => {
       gc.set(a, (gc.get(a) || 0) + 1);
       gc.set(b, (gc.get(b) || 0) + 1);
     };
     s.forEach((r, ri) => {
       const base = ri * 8;
-      for (let i = 0; i < 4; i++) add(r.mw[i], r.mx[i], base + i);
-      add(r.ww[0], r.ww[1], base + 4); add(r.ww[2], r.ww[3], base + 5);
-      add(r.mm[0], r.mm[1], base + 6); add(r.mm[2], r.mm[3], base + 7);
+      const games = [
+        [r.mw[0], r.mx[0], base], [r.mw[1], r.mx[1], base + 1], [r.mw[2], r.mx[2], base + 2], [r.mw[3], r.mx[3], base + 3],
+        [r.ww[0], r.ww[1], base + 4], [r.ww[2], r.ww[3], base + 5], [r.mm[0], r.mm[1], base + 6], [r.mm[2], r.mm[3], base + 7],
+      ];
+      for (const [a, b, n] of games) {
+        count(a, b);
+        typical += wp(a, b, n);
+      }
+      if (plan.counter) {
+        const v = games.map(([a, b]) => pv(a, b));
+        tot += counterRound(v.slice(0, 4), plan.pools.mixed) + counterRound(v.slice(4, 6), plan.pools.female) + counterRound(v.slice(6, 8), plan.pools.male);
+      }
     });
+    if (!plan.counter) tot = typical;
     let pen = 0;
     for (const g of [men, women]) {
       const n = g.map((id) => gc.get(id) || 0);
@@ -412,7 +470,7 @@ function optimize(men, women, { mode, plan }) {
         if (spread > 1) pen += (spread - 1) * 1.0;
       }
     }
-    return { val: tot - pen, tot, pen, gc };
+    return { val: tot - pen, tot, typical, pen, gc };
   }
   function mutate(s) {
     const r = s[rand(4)];
@@ -431,7 +489,7 @@ function optimize(men, women, { mode, plan }) {
   let best = null;
   for (let restart = 0; restart < 6; restart++) {
     let cur = fresh(), cs = score(cur);
-    const N = 22000;
+    const N = 15000;
     for (let it = 0; it < N; it++) {
       const T = 0.4 * Math.pow(0.01, it / N);
       const nx = copy(cur);
@@ -500,7 +558,10 @@ function showLineup(best, wk, plan) {
   $("#luOut").innerHTML = `
     <h2>Suggested lineup</h2>
     <div class="grid g3">
-      <div class="card stat"><div class="num">≈ ${s.tot.toFixed(1)} <span class="muted" style="font-size:18px">of 32</span></div><div class="lbl">expected games won ${plan.some((x) => x.known) ? "vs their posted lineup" : "vs their typical pairs"}</div></div>
+      ${plan.counter
+        ? `<div class="card stat"><div class="num">≈ ${s.tot.toFixed(1)} <span class="muted" style="font-size:18px">of 32</span></div>
+            <div class="lbl">expected games won <b>if they counter-pick</b> us · ≈ ${s.typical.toFixed(1)} if they just play their usual pairs</div></div>`
+        : `<div class="card stat"><div class="num">≈ ${s.tot.toFixed(1)} <span class="muted" style="font-size:18px">of 32</span></div><div class="lbl">expected games won ${plan.some((x) => x.known) ? "vs their actual lineup" : "vs their typical pairs"}</div></div>`}
       <div class="card"><div class="tag">BEST CHANCES</div>${sorted.slice(0, 3).map((g) => `<div>G${g.n + 1}: ${g.us.map(lname).join(" + ")} <b class="pos">${Math.round(g.p * 100)}%</b></div>`).join("")}</div>
       <div class="card"><div class="tag">TOUGHEST GAMES</div>${sorted.slice(-3).reverse().map((g) => `<div>G${g.n + 1}: ${g.us.map(lname).join(" + ")} <b class="neg">${Math.round(g.p * 100)}%</b></div>`).join("")}</div>
     </div>
@@ -512,7 +573,7 @@ function showLineup(best, wk, plan) {
     <h3 style="margin-top:16px">Scorecard</h3>
     <div class="grid gsc">${scorecardHTML(games, wk.opp)}</div>
     <p class="small muted">Win chances are estimates from this season's results. Enter the pairs into CPL's lineup page game by game (Game 1 = first row).
-      If they post their lineup after we do, they can counter us — so posting closer to the deadline helps.</p>`;
+      ${plan.counter ? "Win % per game is vs their usual pairs; since they see our lineup first, expect them to move their best pairs around." : ""}</p>`;
   $("#luCopy").addEventListener("click", (e) => navigator.clipboard.writeText(text).then(() => (e.target.textContent = "Copied ✓")));
   $("#luAgain").addEventListener("click", () => $("#luGo").click());
 }
@@ -748,9 +809,11 @@ function about() {
     <h3>Game Plan (lineup builder)</h3>
     <p>CPL matches are 32 games: 8 rounds of 4 games, one game per court. Rounds 1, 3, 5, 7 are 4 mixed games; rounds 2, 4, 6, 8 are 2 women's + 2 men's games. Each player plays at most once per round, so 8 games is the max.
       The builder tries tens of thousands of lineups and keeps the one with the most expected game wins, while keeping playing time nearly equal (same-gender teammates within 1 game, everyone at least ${MIN_GAMES} of the 8 possible games — so 5 men + 5 women is the most you can bring and still give everyone 6).
-      Before the opponent posts, each game is planned against their <i>typical</i> pair for that game type. Once they post (usually 1–2 days before), the site picks it up within an hour
-      (it checks hourly Thursday–Saturday) and each of our pairs is matched against the exact pair they'll face. Win chances are estimates — a 60% pair still loses 4 out of 10.
-      As a reality check, the model was tested on each match while hiding that match's results: it picked the winning pair <b>${m.oosAccuracy}%</b> of the time.</p>
+      Lineup timing: the <b>away</b> team locks its lineup by Thu 8pm; the <b>home</b> team sees it and sets theirs by Fri 8pm, deciding who plays whom.
+      When we're <b>home</b>, the site picks up their locked lineup within an hour (it checks hourly Thu–Sat) and matches each of our pairs against the exact pair they'll face.
+      When we're <b>away</b>, we post blind, so the lineup is built to hold up even if their captain rearranges their pairs against ours. Win chances are estimates — a 60% pair still loses 4 out of 10.
+      As a reality check, the model was tested on each match while hiding that match's results: it picked the winning pair <b>${m.oosAccuracy}%</b> of the time, and its win chances match reality:
+      ${(m.calibration || []).map((c) => `games it called ${c.band} were won ${c.actual}% of the time`).join("; ")}.</p>
     <h3>Scoring</h3>
     <p>Games are rally scoring to 21. Every match so far has been won by the team that won more games, so the builder maximises games won; total points act as the tiebreaker.</p>
     <h3>DUPR</h3>
