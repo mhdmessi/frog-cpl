@@ -366,8 +366,9 @@ function showTopPairs(ids, focus) {
 }
 
 /**
- * Lineup search. Each round = games 1-4 mixed, 5-6 women's, 7-8 men's (CPL order);
- * a player plays at most one mixed and one same-gender game per round.
+ * Lineup search. 32 games = 8 rounds of 4 games (one per court). Odd rounds: 4 mixed games;
+ * even rounds: 2 women's + 2 men's. A player plays at most once per round (max 8 games).
+ * Internally each "block" here = one mixed round + the gender round after it.
  * Maximises expected games won against the opponent's plan (posted pairs or typical strength).
  */
 function optimize(men, women, { mode, plan }) {
@@ -443,15 +444,18 @@ function optimize(men, women, { mode, plan }) {
   return best;
 }
 
-/** CPL-style scorecard: Round 1-4, each game = Frog pair vs opponent pair. */
+/** CPL-style scorecard: 8 rounds of 4 games (one per court). Odd rounds mixed, even rounds women's + men's. */
 function scorecardHTML(games, oppName, opts = {}) {
   let html = "";
-  for (let r = 0; r < 4; r++) {
-    const rows = games.filter((g) => Math.floor(g.n / 8) === r);
+  for (let r = 0; r < 8; r++) {
+    const rows = games.filter((g) => Math.floor(g.n / 4) === r);
     if (!rows.length) continue;
-    html += `<div class="card round"><h3>Round ${r + 1}</h3><table class="sc"><thead><tr>
+    const won = rows.filter((g) => g.usScore > g.themScore).length;
+    const sub = r % 2 === 0 ? "Mixed" : "Women's + Men's";
+    const right = opts.scores ? `<span class="tag">won ${won} of ${rows.length}</span>` : "";
+    html += `<div class="card round"><h3>Round ${r + 1} <span class="tag">· ${sub}</span> ${right}</h3><table class="sc"><thead><tr>
       <th class="nosort">Game</th><th class="nosort">Type</th><th class="nosort">Frog</th>
-      <th class="nosort num">${opts.scores ? "Score" : "Win %"}</th><th class="nosort">${esc(oppName)}</th></tr></thead><tbody>
+      <th class="nosort num">${opts.scores ? "Score" : "Win %"}</th><th class="nosort" title="${esc(oppName)}">Opponent</th></tr></thead><tbody>
       ${rows.map((g) => `<tr><td class="muted">${g.n + 1}</td><td><span class="ty">${TYPE_LABEL[gameType(g.n)]}</span></td>
         <td><b>${g.us.map((x) => esc(lname(x))).join(" + ")}</b>${g.hist ? ` <span class="tag">${esc(g.hist)}</span>` : ""}</td>
         <td class="num">${opts.scores
@@ -490,7 +494,7 @@ function showLineup(best, wk, plan) {
   plan.forEach((x) => (x.pair || []).forEach((id) => (theirCounts[id] = (theirCounts[id] || 0) + 1)));
   const sorted = [...games].sort((a, b) => b.p - a.p);
   const text = `Frog lineup — Week ${wk.week} ${wk.home ? "vs" : "@"} ${wk.opp}\n` +
-    [0, 1, 2, 3].map((r) => `\nRound ${r + 1}\n` + games.filter((g) => Math.floor(g.n / 8) === r)
+    [0, 1, 2, 3, 4, 5, 6, 7].map((r) => `\nRound ${r + 1}\n` + games.filter((g) => Math.floor(g.n / 4) === r)
       .map((g) => `  G${g.n + 1} ${TYPE_LABEL[gameType(g.n)]}: ${g.us.map(lname).join(" + ")}`).join("\n")).join("\n") +
     `\n\nGames per player: ` + Object.entries(counts).map(([id, c]) => `${lname(id)} ${c}`).join(", ");
   $("#luOut").innerHTML = `
@@ -739,7 +743,7 @@ function about() {
     <p>For each of our pairs we compare how they actually did with what their two ratings predicted. A positive number means they play better together than apart.
       It's shrunk toward 0 for pairs with only a game or two.</p>
     <h3>Game Plan (lineup builder)</h3>
-    <p>CPL matches are 32 games in 4 rounds; each round is games 1–4 mixed, 5–6 women's, 7–8 men's, and a player plays at most one mixed and one same-gender game per round.
+    <p>CPL matches are 32 games: 8 rounds of 4 games, one game per court. Rounds 1, 3, 5, 7 are 4 mixed games; rounds 2, 4, 6, 8 are 2 women's + 2 men's games. Each player plays at most once per round, so 8 games is the max.
       The builder tries tens of thousands of lineups and keeps the one with the most expected game wins, while keeping playing time nearly equal (same-gender teammates within 1 game, everyone at least ${MIN_GAMES} of the 8 possible games — so 5 men + 5 women is the most you can bring and still give everyone 6).
       Before the opponent posts, each game is planned against their <i>typical</i> pair for that game type. Once they post (usually 1–2 days before), the site picks it up within an hour
       (it checks hourly Thursday–Saturday) and each of our pairs is matched against the exact pair they'll face. Win chances are estimates — a 60% pair still loses 4 out of 10.
