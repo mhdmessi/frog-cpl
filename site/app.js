@@ -116,6 +116,14 @@ function parseCsv(text) {
   rows.push(row);
   return rows;
 }
+/** Same rules as sheet_cell() in build_data.py: "Yes 3" / "Yes - sit 3" / "sit 3" = in, asks to sit out 3 games. */
+function sheetCell(raw) {
+  const v = raw.trim().toLowerCase().split(/\s+/).filter(Boolean).join(" ");
+  if (!v) return ["", null];
+  const m = /^(yes|y|maybe)?\b[\s\-:(,]*(?:sit out|sits?|sitting)?[\s\-:(,]*(\d)\b/.exec(v) || /^(sits?|sit out)\s*(\d)/.exec(v);
+  if (m) return [m[1] === "maybe" ? "maybe" : "yes", Math.min(8, Number(m[2]))];
+  return [{ yes: "yes", y: "yes", no: "no", n: "no", maybe: "maybe" }[v] || v, null];
+}
 function liveSheet(level) {
   const m = /\/d\/([^/]+)\/.*gid=(\d+)/.exec(D.sheetUrl || "");
   if (!m) return;
@@ -137,19 +145,21 @@ function liveSheet(level) {
         const name = header[i].split(/\s+/).filter(Boolean).join(" ");
         if (name) cols.push([i, bySheet[name] || "sheet:" + name]);
       }
-      const norm = { yes: "yes", y: "yes", no: "no", n: "no", maybe: "maybe" };
+
       let changed = false;
       for (const row of rows.slice(hi + 1)) {
         if (!(row[0] || "").trim()) break;
         const wm = /week\s*(\d+)/i.exec(row[0]);
         const wk = wm && D.schedule.find((s) => s.week === Number(wm[1]));
         if (!wk) continue;
-        const avail = {};
+        const avail = {}, sits = {};
         cols.forEach(([i, id]) => {
-          const v = (row[i] || "").trim().toLowerCase();
-          if (v) avail[id] = norm[v] || v;
+          const [v, n] = sheetCell(row[i] || "");
+          if (v) avail[id] = v;
+          if (n !== null) sits[id] = n;
         });
         if (JSON.stringify(avail) !== JSON.stringify(wk.avail)) (wk.avail = avail), (changed = true);
+        if (JSON.stringify(sits) !== JSON.stringify(wk.sits || {})) (wk.sits = sits), (changed = true);
       }
       D.sheetLive = new Date();
       const note = $("#foot").querySelector(".live") || $("#foot").appendChild(document.createElement("span"));
@@ -436,6 +446,10 @@ function lineup(arg, auto) {
     LU.sel = new Set(D.players.filter((p) => availFor(wk, p.id) === "yes").map((p) => p.id));
     LU.selWeek = LU.week;
   }
+  // Sit-out requests: from the sheet ("Yes 3"), changeable here (saved on this device per match).
+  const sitKey = `frogSits:${wk.matchupId}`;
+  const sitLocal = (() => { try { return JSON.parse(localStorage.getItem(sitKey)) || {}; } catch { return {}; } })();
+  const sitOf = (id) => (id in sitLocal ? sitLocal[id] : (wk.sits || {})[id] ?? null);
   let plan = oppPlan(wk);
   const nKnown = plan.filter((x) => x.known).length;
   const ourPosted = (D.posted[wk.matchupId]?.us || []).filter(Boolean).length;
@@ -462,7 +476,7 @@ function lineup(arg, auto) {
       </div>
       ${statusAll}
       ${ourPosted ? `<div class="alert good">Our lineup on CPL: ${ourPosted} of 32 games filled in.</div>` : ""}
-      <p class="small muted" style="margin:10px 0 0">Everyone plays at least ${MIN_GAMES} of the 8 games, same-gender teammates stay within 1 game of each other, and no pair partners more than ${MAX_PAIR} times (CPL rule).
+      <p class="small muted" style="margin:10px 0 0">Everyone plays at least ${MIN_GAMES} of the 8 games, same-gender teammates stay within 1 game of each other, and no pair partners more than ${MAX_PAIR} times (CPL rule). Someone who wants breaks can write a number after Yes on the sheet (<b>Yes 3</b> = sit out 3 games), or pick it under their name below.
         With 4 men + 4 women everyone plays all 8.</p>
       <p class="small muted" style="margin:10px 0 0"><b>Automatic:</b> everyone marked <b>In</b> on the sheet is checked, gaps are filled from Maybes then subs, and the best lineup is built below.
         Change any box and it rebuilds. Same data → same lineup for everyone.</p>
@@ -509,11 +523,20 @@ function lineup(arg, auto) {
           const on = LU.sel.has(p.id);
           return `<label class="${on ? "on" : ""}"><input type="checkbox" data-id="${p.id}" ${on ? "checked" : ""}>
             <span><b>${esc(sn(p.id))}</b> ${p.isSub ? '<span class="tag">sub</span>' : ""}<br>${availPill(availFor(wk, p.id))}
-            <span class="tag rating ${cls(p.rating)}">${signed(p.rating)}</span></span></label>`;
+            <span class="tag rating ${cls(p.rating)}">${signed(p.rating)}</span>
+            ${on ? `<br><select class="sitsel" data-id="${p.id}" data-tip="Games this player asked to sit out">${["", 1, 2, 3, 4, 5, 6, 7, 8]
+              .map((n) => `<option value="${n}" ${String(sitOf(p.id) ?? "") === String(n) ? "selected" : ""}>${n === "" ? "Plays as needed" : `Sits ${n} (plays ${8 - n})`}</option>`).join("")}</select>` : ""}</span></label>`;
         })
         .join("");
     $("#luPick").innerHTML = `<div class="tag" style="margin-bottom:6px">MEN</div><div class="pick">${grp(true)}</div>
       <div class="tag" style="margin:12px 0 6px">WOMEN</div><div class="pick">${grp(false)}</div>`;
+    $("#luPick").querySelectorAll(".sitsel").forEach((sel) => {
+      sel.addEventListener("change", () => {
+        sitLocal[sel.dataset.id] = sel.value === "" ? null : Number(sel.value);
+        localStorage.setItem(sitKey, JSON.stringify(sitLocal));
+        scheduleBuild();
+      });
+    });
     $("#luPick").querySelectorAll("input").forEach((i) =>
       i.addEventListener("change", () => {
         i.checked ? LU.sel.add(i.dataset.id) : LU.sel.delete(i.dataset.id);
@@ -558,7 +581,9 @@ function lineup(arg, auto) {
     const men = [...LU.sel].filter(isMale), women = [...LU.sel].filter((id) => !isMale(id));
     $("#luOut").innerHTML = `<p class="muted">⏳ Building the best lineup…</p>`;
     const seed = `${wk.matchupId}|${plan.filter((x) => x.known).length}`;
-    setTimeout(() => showLineup(autoLineup(men, women, { mode: LU.mode, plan, seed }), wk, plan, [...LU.sel]), 20);
+    const sits = {};
+    LU.sel.forEach((id) => sitOf(id) != null && (sits[id] = sitOf(id)));
+    setTimeout(() => showLineup(autoLineup(men, women, { mode: LU.mode, plan, seed, sits }), wk, plan, [...LU.sel], sits), 20);
   };
   const scheduleBuild = () => {
     clearTimeout(buildTimer);
@@ -630,13 +655,22 @@ function seededRng(seedStr) {
  * Pick who plays (max 5 per gender so everyone gets 6+), then build the lineup.
  * Sit-out candidates = the lowest-rated few; each option gets a quick build and the best one gets the full build.
  */
+/** How many must sit the whole match so everyone else still gets 6+ of the 32 spots,
+ *  counting players who asked for sit-outs at what they asked for. */
+function benchNeeded(g, sits = {}) {
+  const req = g.filter((id) => sits[id] != null);
+  const reqGames = req.reduce((a, id) => a + (8 - sits[id]), 0);
+  const free = g.length - req.length;
+  return Math.max(0, Math.min(free, Math.ceil((reqGames + MIN_GAMES * free - 32) / MIN_GAMES)));
+}
 function autoLineup(men, women, opts) {
   const choose = (arr, k) => (k === 0 ? [[]] : arr.flatMap((x, i) => choose(arr.slice(i + 1), k - 1).map((c) => [x, ...c])));
+  const sits = opts.sits || {};
   const sitOptions = (g) => {
-    const extra = g.length - MAX_FOR_MIN;
+    const extra = benchNeeded(g, sits);
     if (extra <= 0) return [[]];
     const r = (id) => (P[id] ? P[id].rating : -1) || 0;
-    const pool = [...g].sort((a, b) => r(a) - r(b)).slice(0, extra + 2);
+    const pool = g.filter((id) => sits[id] == null).sort((a, b) => r(a) - r(b)).slice(0, extra + 2);
     return choose(pool, extra);
   };
   const mOpts = sitOptions(men), wOpts = sitOptions(women);
@@ -651,7 +685,7 @@ function autoLineup(men, women, opts) {
   return optimize(best.m, best.w, opts);
 }
 
-function optimize(men, women, { mode, plan, seed = "frog", quick = false }) {
+function optimize(men, women, { mode, plan, seed = "frog", quick = false, sits = {} }) {
   men = [...men].sort();
   women = [...women].sort();
   const rng = seededRng(seed + "|" + men.join(",") + "|" + women.join(","));
@@ -724,11 +758,15 @@ function optimize(men, women, { mode, plan, seed = "frog", quick = false }) {
     });
     if (!plan.counter) tot = typical;
     let pen = 0;
+    let sitMiss = 0;
     for (const g of [men, women]) {
+      // Asked for sit-outs: play exactly 8 minus what they asked for. Strong, but below the CPL pair rule.
+      for (const id of g) if (sits[id] != null) sitMiss += Math.abs((gc.get(id) || 0) - (8 - sits[id]));
       // More than 5 available: the extras sit out (5 is the most that still gives everyone 6+ of the 32 spots).
       // The search decides who sits by what wins the most games.
-      const allowedBench = Math.max(0, g.length - MAX_FOR_MIN);
-      const counts = g.map((id) => gc.get(id) || 0).sort((a, b) => a - b);
+      const free = g.filter((id) => sits[id] == null);
+      const allowedBench = benchNeeded(g, sits);
+      const counts = free.map((id) => gc.get(id) || 0).sort((a, b) => a - b);
       let excused = 0;
       const n = counts.filter((x) => (x === 0 && excused < allowedBench ? (excused++, false) : true));
       for (const x of n) if (x < MIN_GAMES) pen += (MIN_GAMES - x) ** 2 * 2; // everyone who plays gets 6+; shortfalls get spread out
@@ -740,8 +778,8 @@ function optimize(men, women, { mode, plan, seed = "frog", quick = false }) {
     // CPL rule, not a preference: any pair over the limit costs far more than a game is worth.
     let pairOver = 0;
     for (const c of pc.values()) if (c > MAX_PAIR) pairOver += c - MAX_PAIR;
-    pen += pairOver * 5;
-    return { val: tot - pen, tot, typical, pen, gc, pairOver };
+    pen += pairOver * 5 + sitMiss * 3;
+    return { val: tot - pen, tot, typical, pen, gc, pairOver, sitMiss };
   }
   function mutate(s) {
     const r = s[rand(4)];
@@ -803,7 +841,7 @@ function rosterHTML(ids, counts, title) {
   return `<div class="card"><h3>${esc(title)}</h3><table class="sc"><tbody>${list(true)}${list(false)}</tbody></table></div>`;
 }
 
-function showLineup(best, wk, plan, selected = []) {
+function showLineup(best, wk, plan, selected = [], sits = {}) {
   const { lineup: L, s } = best;
   const sitting = selected.filter((id) => !s.gc.get(id));
   const games = [];
@@ -837,8 +875,12 @@ function showLineup(best, wk, plan, selected = []) {
       <div class="card"><div class="tag">BEST CHANCES</div>${sorted.slice(0, 3).map((g) => `<div>G${g.n + 1}: ${g.us.map(lname).join(" + ")} <b class="pos">${Math.round(g.p * 100)}%</b></div>`).join("")}</div>
       <div class="card"><div class="tag">TOUGHEST GAMES</div>${sorted.slice(-3).reverse().map((g) => `<div>G${g.n + 1}: ${g.us.map(lname).join(" + ")} <b class="neg">${Math.round(g.p * 100)}%</b></div>`).join("")}</div>
     </div>
+    ${Object.keys(sits).length ? `<div class="alert ${s.sitMiss ? "warn" : "good"}">🪑 <b>Sit-out requests:</b> ${Object.entries(sits).map(([id, n]) => {
+      const got = 8 - (counts[id] || 0);
+      return `${esc(lname(id))} ${got === n ? `sits ${n} ✓` : `asked ${n}, sits ${got}`}`;
+    }).join(" · ")}${s.sitMiss ? ` — not every request fits (each gender has exactly 32 spots), so the closest lineup is shown.` : ""}</div>` : ""}
     ${s.pairOver ? `<div class="alert bad">⚠️ ${s.pairOver} game(s) break CPL's rule that a pair can partner at most ${MAX_PAIR} times. Add a player or press Rebuild.</div>` : ""}
-    ${s.pen > 0.01 && !s.pairOver ? `<div class="alert warn">With this group, not every playing-time goal could be met (everyone ${MIN_GAMES}+ games, within 1 of each other) — check the games-per-player counts.</div>` : ""}
+    ${s.pen > 0.01 && !s.pairOver && !s.sitMiss ? `<div class="alert warn">With this group, not every playing-time goal could be met (everyone ${MIN_GAMES}+ games, within 1 of each other) — check the games-per-player counts.</div>` : ""}
     <div class="row" style="margin:12px 0"><button class="btn ghost" id="luCopy">Copy lineup as text</button>
 </div>
     ${sitting.length ? `<div class="alert warn">🪑 <b>Sitting out:</b> ${sitting.map((id) => esc(lname(id))).join(", ")} — more players are in than can each get ${MIN_GAMES} games, and this choice wins the most games. Uncheck someone else if you'd rather they sit.</div>` : ""}

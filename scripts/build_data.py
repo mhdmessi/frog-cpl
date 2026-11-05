@@ -382,6 +382,7 @@ def main():
             "usGames": us_g if done else None, "themGames": them_g if done else None,
             "address": m.get("address") or wk.get("address"),
             "avail": {name_to_pid.get(n, "sheet:" + n): v for n, v in wk.get("avail", {}).items()},
+            "sits": {name_to_pid.get(n, "sheet:" + n): v for n, v in wk.get("sits", {}).items()},
         })
 
     # -------- lineups already posted for upcoming matches (opponents post 1-2 days before)
@@ -571,6 +572,19 @@ def fit_ratings(games, iters=300):
     return r, plays
 
 
+def sheet_cell(raw):
+    """'Yes', 'No', 'Maybe' -> (value, None). A number after Yes asks for that many sit-outs:
+    'Yes 3', 'Yes - sit 3', 'Yes (3)', 'sit 3' -> ('yes', 3)."""
+    v = " ".join(raw.strip().lower().split())
+    if not v:
+        return "", None
+    m = re.match(r"^(yes|y|maybe)?\b[\s\-:(,]*(?:sit out|sits?|sitting)?[\s\-:(,]*(\d)\b", v) or re.match(r"^(sits?|sit out)\s*(\d)", v)
+    if m:
+        base = "maybe" if m.group(1) == "maybe" else "yes"
+        return base, min(8, int(m.group(2)))
+    return {"yes": "yes", "y": "yes", "no": "no", "n": "no", "maybe": "maybe"}.get(v, v), None
+
+
 def parse_sheet(rows):
     header_i = next(i for i, row in enumerate(rows) if row and row[0].strip().lower() == "week")
     header = rows[header_i]
@@ -584,13 +598,14 @@ def parse_sheet(rows):
         m = re.match(r"week\s*(\d+)", row[0].strip().lower())
         if not m:
             continue
-        avail = {}
+        avail, sits = {}, {}
         for i, name in cols:
-            v = (row[i] if i < len(row) else "").strip().lower()
-            v = {"yes": "yes", "y": "yes", "no": "no", "n": "no", "maybe": "maybe"}.get(v, v or "")
+            v, n_sit = sheet_cell(row[i] if i < len(row) else "")
             if v:
                 avail[name] = v
-        weeks[int(m.group(1))] = {"date": row[1].strip(), "avail": avail,
+            if n_sit is not None:
+                sits[name] = n_sit
+        weeks[int(m.group(1))] = {"date": row[1].strip(), "avail": avail, "sits": sits,
                                   "address": row[addr_col].strip() if addr_col is not None and addr_col < len(row) else None}
     return {"players": [n for _, n in cols], "weeks": weeks}
 
