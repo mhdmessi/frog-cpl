@@ -2,8 +2,15 @@ name: Refresh data & deploy site
 
 on:
   schedule:
-    - cron: "0 */3 * * 0-3"   # every 3 hours Sun-Wed
-    - cron: "0 * * * 4-6"     # hourly Thu-Sat (opponent lineups get posted 1-2 days before the match)
+    # Times are UTC. Chicago = UTC-6 in winter (UTC-5 in summer, so everything shifts an hour).
+    # Every 2 hours from Wed 12am to Sat midnight Chicago (roster and lineup week):
+    - cron: "0 6-22/2 * * 3"  # Wed 12am-4pm Chicago
+    - cron: "0 */2 * * 4-6"   # Wed 6pm - Sat 4pm Chicago
+    - cron: "0 0-4/2 * * 0"   # Sat 6pm-10pm Chicago
+    # Every 3 hours the rest of the week (Sun-Tue):
+    - cron: "0 6-21/3 * * 0"
+    - cron: "0 */3 * * 1-2"
+    - cron: "0 0,3 * * 3"     # Tue 6pm and 9pm Chicago
   workflow_dispatch:         # "Run workflow" button on GitHub
   push:
     branches: [main]

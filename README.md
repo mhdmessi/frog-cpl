@@ -6,7 +6,7 @@ Stats, partner chemistry, scouting and a lineup builder for both Frog Pickleball
 - **Build**: `python3 scripts/build_data.py` → writes `site/data-3.0.json`, `site/data-3.5.json`, `site/teams.json` (stdlib only, no installs). `--cache` reuses downloaded responses.
 - **Site**: plain HTML/CSS/JS in `site/`. Preview locally: `cd site && python3 -m http.server` → http://localhost:8000
 - **Live availability**: the page reads the sheet directly each time it opens (`liveSheet` in `site/app.js`), so Yes/No changes show up on reload. New players still need the rebuild (and a CPL roster entry) before they can be picked.
-- **Hosting**: GitHub Pages. `.github/workflows/update.yml` rebuilds the data every 3 hours (hourly Thu–Sat, when opponent lineups get posted) and on every push, so sheet edits and new results show up automatically. Force a refresh from the repo's Actions tab → "Run workflow".
+- **Hosting**: GitHub Pages. `.github/workflows/update.yml` rebuilds the data every 2 hours Wed–Sat Chicago time (roster and lineup week) and every 3 hours Sun–Tue and on every push, so sheet edits and new results show up automatically. Force a refresh from the repo's Actions tab → "Run workflow".
 
 ## Tweaks
 In `scripts/build_data.py`:

@@ -264,7 +264,7 @@ function changesCard() {
           ? '<span class="tag">added to the sheet</span>'
           : `Week ${c.week}: ${availPill(c.from)} → ${availPill(c.to)}`}</td></tr>`).join("")}</tbody></table>`
       : `<p class="muted">No changes since tracking started. Each update compares the sheet with the last one and lists anything that moved here.</p>`}
-    <p class="small muted" style="margin:8px 0 0">Checked every 3 hours, hourly Wed evening–Sat (GitHub sometimes runs a few hours late). Last check ${new Date(D.generated).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })}.</p></div>`);
+    <p class="small muted" style="margin:8px 0 0">Checked every 2 hours Wed–Sat and every 3 hours Sun–Tue (GitHub sometimes runs a bit late). Last check ${new Date(D.generated).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })}.</p></div>`);
 }
 
 function home() {
