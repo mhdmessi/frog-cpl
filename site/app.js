@@ -91,8 +91,76 @@ function loadTeam(level) {
         and the <a href="${esc(D.sheetUrl)}" target="_blank" rel="noopener">team availability sheet (${esc(level)} tab)</a>.
         Updated ${new Date(D.generated).toLocaleString()}. Refreshes automatically every few hours.`;
       route();
+      return liveSheet(level);
     })
     .catch((e) => ($("#app").innerHTML = `<div class="alert bad">Couldn't load the ${esc(level)} team (${esc(e.message)}).</div>`));
+}
+
+/* Who's in comes straight from the team sheet every time the page opens, so Thursday roster changes show up
+   right away instead of waiting for the next rebuild. Results and the CPL roster still come from the rebuild. */
+function parseCsv(text) {
+  const rows = [];
+  let row = [], cell = "", q = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (q) {
+      if (c === '"' && text[i + 1] === '"') (cell += '"'), i++;
+      else if (c === '"') q = false;
+      else cell += c;
+    } else if (c === '"') q = true;
+    else if (c === ",") row.push(cell), (cell = "");
+    else if (c === "\n") row.push(cell), rows.push(row), (row = []), (cell = "");
+    else if (c !== "\r") cell += c;
+  }
+  row.push(cell);
+  rows.push(row);
+  return rows;
+}
+function liveSheet(level) {
+  const m = /\/d\/([^/]+)\/.*gid=(\d+)/.exec(D.sheetUrl || "");
+  if (!m) return;
+  const data = D;
+  return fetch(`https://docs.google.com/spreadsheets/d/${m[1]}/export?format=csv&gid=${m[2]}&t=${Date.now()}`)
+    .then((r) => (r.ok ? r.text() : Promise.reject()))
+    .then((text) => {
+      if (D !== data) return; // switched teams meanwhile
+      const rows = parseCsv(text);
+      const hi = rows.findIndex((r) => (r[0] || "").trim().toLowerCase() === "week");
+      if (hi < 0) return;
+      const header = rows[hi];
+      let end = header.findIndex((h) => h.toLowerCase().includes("match info"));
+      if (end < 0) end = header.length;
+      const bySheet = {};
+      D.players.forEach((p) => p.sheetName && (bySheet[p.sheetName] = p.id));
+      const cols = [];
+      for (let i = 2; i < end; i++) {
+        const name = header[i].split(/\s+/).filter(Boolean).join(" ");
+        if (name) cols.push([i, bySheet[name] || "sheet:" + name]);
+      }
+      const norm = { yes: "yes", y: "yes", no: "no", n: "no", maybe: "maybe" };
+      let changed = false;
+      for (const row of rows.slice(hi + 1)) {
+        if (!(row[0] || "").trim()) break;
+        const wm = /week\s*(\d+)/i.exec(row[0]);
+        const wk = wm && D.schedule.find((s) => s.week === Number(wm[1]));
+        if (!wk) continue;
+        const avail = {};
+        cols.forEach(([i, id]) => {
+          const v = (row[i] || "").trim().toLowerCase();
+          if (v) avail[id] = norm[v] || v;
+        });
+        if (JSON.stringify(avail) !== JSON.stringify(wk.avail)) (wk.avail = avail), (changed = true);
+      }
+      D.sheetLive = new Date();
+      const note = $("#foot").querySelector(".live") || $("#foot").appendChild(document.createElement("span"));
+      note.className = "live";
+      note.textContent = ` Who's in: live from the sheet (${D.sheetLive.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}).`;
+      if (changed) {
+        LU.sel = null; // re-pick the Game Plan from the fresh sheet
+        route();
+      }
+    })
+    .catch(() => {}); // sheet unreachable: keep what the last rebuild saw
 }
 
 fetch("teams.json?v=" + Date.now())
@@ -861,7 +929,7 @@ function schedule() {
   const extra = [...new Set(weeks.flatMap((s) => Object.keys(s.avail).filter((k) => k.startsWith("sheet:"))))];
   const short = { yes: "✓", no: "✗", maybe: "?" };
   section(`<h2>Who's in each week</h2>
-    <p class="muted">From the <a href="${esc(D.sheetUrl)}" target="_blank" rel="noopener">team sheet</a>. Update the sheet and this page refreshes on its own within a few hours.</p>
+    <p class="muted">From the <a href="${esc(D.sheetUrl)}" target="_blank" rel="noopener">team sheet</a>. Read live from the sheet every time this page opens — just reload after a change.</p>
     <div class="tbl-wrap"><table class="avail"><thead><tr><th class="nosort">Player</th>${weeks.map((s) => `<th class="nosort num" data-tip="${esc(fmtDate(s.time, false) + " vs " + s.opp)}">W${s.week}</th>`).join("")}</tr></thead><tbody>
     ${people.map((p) => `<tr><td>${esc(sn(p.id))} <span class="tag">${p.gender === "Male" ? "M" : "W"}${p.isSub ? " · sub" : ""}</span></td>${weeks.map((s) => {
       const v = s.avail[p.id] || "";
@@ -977,7 +1045,7 @@ function about() {
   <div class="card">
     <h3>Where the data comes from</h3>
     <p>Every game result in the ${esc(D.division)} division comes from the CPL website (${m.games} games so far, all teams — not just ours).
-      Who's playing each week comes from the <a href="${esc(D.sheetUrl)}" target="_blank" rel="noopener">team sheet</a>. This site rebuilds itself automatically every few hours, so results and sheet changes show up on their own.</p>
+      Who's playing each week comes from the <a href="${esc(D.sheetUrl)}" target="_blank" rel="noopener">team sheet</a>. Who's in is read live from the sheet each time the page opens. Results and the CPL roster update automatically every few hours.</p>
     <h3>Player rating</h3>
     <p>Win-loss records can mislead: if you always play with the strongest partner, or always face the other team's best pair, your record doesn't reflect you.
       The rating looks at every game in the division and works out how many points per game each player adds compared with an average player,
