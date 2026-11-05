@@ -317,6 +317,7 @@ function home() {
 /* ------------------------------------------------------------ GAME PLAN (lineup builder) */
 const LU = { week: null, sel: null, selWeek: null, mode: "even" }; // mode fixed: 6-game minimum leaves almost no room for a "max wins" variant
 const MIN_GAMES = 6; // team rule: everyone plays at least 6 of 8 games
+const MAX_PAIR = 2; // CPL rule: the same two players can partner at most 2 times per match
 const MAX_FOR_MIN = Math.floor(32 / MIN_GAMES); // each gender has 32 game spots per match -> 5 players
 const TYPE_LABEL = { mixed: "Mixed", female: "Women's", male: "Men's" };
 const gameType = (n) => (n % 8 < 4 ? "mixed" : n % 8 < 6 ? "female" : "male");
@@ -443,7 +444,7 @@ function lineup(arg, auto) {
       </div>
       ${statusAll}
       ${ourPosted ? `<div class="alert good">Our lineup on CPL: ${ourPosted} of 32 games filled in.</div>` : ""}
-      <p class="small muted" style="margin:10px 0 0">Everyone plays at least ${MIN_GAMES} of the 8 games, and same-gender teammates stay within 1 game of each other.
+      <p class="small muted" style="margin:10px 0 0">Everyone plays at least ${MIN_GAMES} of the 8 games, same-gender teammates stay within 1 game of each other, and no pair partners more than ${MAX_PAIR} times (CPL rule).
         With 4 men + 4 women everyone plays all 8.</p>
       <p class="small muted" style="margin:10px 0 0"><b>Automatic:</b> everyone marked <b>In</b> on the sheet is checked, gaps are filled from Maybes then subs, and the best lineup is built below.
         Change any box and it rebuilds. Same data → same lineup for everyone.</p>
@@ -681,10 +682,12 @@ function optimize(men, women, { mode, plan, seed = "frog", quick = false }) {
   const copy = (s) => s.map((r) => ({ mx: [...r.mx], mw: [...r.mw], mm: [...r.mm], ww: [...r.ww] }));
   function score(s) {
     let tot = 0, typical = 0;
-    const gc = new Map();
+    const gc = new Map(), pc = new Map();
     const count = (a, b) => {
       gc.set(a, (gc.get(a) || 0) + 1);
       gc.set(b, (gc.get(b) || 0) + 1);
+      const k = pairKey(a, b);
+      pc.set(k, (pc.get(k) || 0) + 1);
     };
     s.forEach((r, ri) => {
       const base = ri * 8;
@@ -716,7 +719,11 @@ function optimize(men, women, { mode, plan, seed = "frog", quick = false }) {
         if (spread > 1) pen += (spread - 1) * 1.0;
       }
     }
-    return { val: tot - pen, tot, typical, pen, gc };
+    // CPL rule, not a preference: any pair over the limit costs far more than a game is worth.
+    let pairOver = 0;
+    for (const c of pc.values()) if (c > MAX_PAIR) pairOver += c - MAX_PAIR;
+    pen += pairOver * 5;
+    return { val: tot - pen, tot, typical, pen, gc, pairOver };
   }
   function mutate(s) {
     const r = s[rand(4)];
@@ -812,7 +819,8 @@ function showLineup(best, wk, plan, selected = []) {
       <div class="card"><div class="tag">BEST CHANCES</div>${sorted.slice(0, 3).map((g) => `<div>G${g.n + 1}: ${g.us.map(lname).join(" + ")} <b class="pos">${Math.round(g.p * 100)}%</b></div>`).join("")}</div>
       <div class="card"><div class="tag">TOUGHEST GAMES</div>${sorted.slice(-3).reverse().map((g) => `<div>G${g.n + 1}: ${g.us.map(lname).join(" + ")} <b class="neg">${Math.round(g.p * 100)}%</b></div>`).join("")}</div>
     </div>
-    ${s.pen > 0.01 ? `<div class="alert warn">With this group, not every playing-time goal could be met (everyone ${MIN_GAMES}+ games, within 1 of each other) — check the games-per-player counts.</div>` : ""}
+    ${s.pairOver ? `<div class="alert bad">⚠️ ${s.pairOver} game(s) break CPL's rule that a pair can partner at most ${MAX_PAIR} times. Add a player or press Rebuild.</div>` : ""}
+    ${s.pen > 0.01 && !s.pairOver ? `<div class="alert warn">With this group, not every playing-time goal could be met (everyone ${MIN_GAMES}+ games, within 1 of each other) — check the games-per-player counts.</div>` : ""}
     <div class="row" style="margin:12px 0"><button class="btn ghost" id="luCopy">Copy lineup as text</button>
 </div>
     ${sitting.length ? `<div class="alert warn">🪑 <b>Sitting out:</b> ${sitting.map((id) => esc(lname(id))).join(", ")} — more players are in than can each get ${MIN_GAMES} games, and this choice wins the most games. Uncheck someone else if you'd rather they sit.</div>` : ""}
