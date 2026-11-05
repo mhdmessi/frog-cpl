@@ -495,6 +495,8 @@ def main():
         "sheetUrl": f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/edit#gid={SHEET_GID}",
     }
     data["insights"] = insights(data, sigma)
+    data["sheetCols"] = sheet["players"]
+    data["changes"] = sheet_changes(data)
 
     os.makedirs(os.path.join(ROOT, "site"), exist_ok=True)
     with open(os.path.join(ROOT, "site", f"data-{DIVISION}.json"), "w") as f:
@@ -697,6 +699,44 @@ def insights(d, sigma):
         out.append({"kind": "info", "title": "Missing DUPR ratings",
                     "text": f"No DUPR rating on CPL for: {', '.join(no_dupr)}. Linking DUPR helps compare against other teams."})
     return out
+
+
+SITE_URL = "https://mhdmessi.github.io/frog-cpl"
+KEEP_CHANGES_DAYS = 21
+
+
+def sheet_changes(new):
+    """Compare this sheet read with what the live site had last time: who switched Yes/No/Maybe, who's new.
+    The live site is the memory between runs, so nothing has to be committed."""
+    try:
+        req = urllib.request.Request(f"{SITE_URL}/data-{DIVISION}.json?t={int(time.time())}", headers={"User-Agent": "frog-cpl-dashboard"})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            old = json.loads(r.read())
+    except Exception as e:  # noqa: BLE001
+        print(f"  (no previous data to compare: {e})")
+        return []
+    names = {p["id"]: p["name"] for p in old.get("players", []) + new["players"]}
+    nm = lambda k: names.get(k) or k.replace("sheet:", "")
+    now = new["generated"]
+    found = []
+    old_cols = set(old.get("sheetCols") or [p["sheetName"] for p in old.get("players", []) if p.get("sheetName")] + old.get("sheetOnly", []))
+    for col in new["sheetCols"]:
+        if col not in old_cols:
+            cpl = next((p["name"] for p in new["players"] if p.get("sheetName") == col), None)
+            found.append({"t": now, "kind": "new", "name": cpl or re.sub(r"\s*\(sub\)\s*$", "", col, flags=re.I)})
+    old_wk = {s["week"]: s.get("avail", {}) for s in old.get("schedule", [])}
+    for s in new["schedule"]:
+        if s["done"] or s["week"] not in old_wk:
+            continue
+        a, b = old_wk[s["week"]], s["avail"]
+        for k in sorted(set(a) | set(b), key=nm):
+            if a.get(k, "") != b.get(k, ""):
+                found.append({"t": now, "kind": "avail", "week": s["week"], "name": nm(k), "from": a.get(k, ""), "to": b.get(k, "")})
+    for c in found:
+        print("  sheet change:", c)
+    cutoff = datetime.now(timezone.utc).timestamp() - KEEP_CHANGES_DAYS * 86400
+    keep = [c for c in old.get("changes", []) if datetime.fromisoformat(c["t"]).timestamp() >= cutoff]
+    return (found + keep)[:80]
 
 
 def run_all():

@@ -250,6 +250,23 @@ function section(html) {
 }
 
 /* ------------------------------------------------------------ HOME */
+/* Sheet changes since the last checks: who switched In/Out/Maybe and who was added. Built by each update run. */
+function changesCard() {
+  const list = (D.changes || []).slice(0, 25);
+  const word = { yes: "In", no: "Out", maybe: "Maybe", "": "no reply" };
+  const ago = (t) => {
+    const h = (Date.now() - new Date(t)) / 36e5;
+    return h < 1 ? "just now" : h < 24 ? Math.round(h) + "h ago" : new Date(t).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+  };
+  section(`<h2>Sheet changes</h2><div class="card">
+    ${list.length
+      ? `<table class="sc"><tbody>${list.map((c) => `<tr><td class="muted small">${ago(c.t)}</td><td><b>${esc(c.name)}</b></td><td>${c.kind === "new"
+          ? '<span class="tag">added to the sheet</span>'
+          : `Week ${c.week}: ${availPill(c.from)} → ${availPill(c.to)}`}</td></tr>`).join("")}</tbody></table>`
+      : `<p class="muted">No changes since tracking started. Each update compares the sheet with the last one and lists anything that moved here.</p>`}
+    <p class="small muted" style="margin:8px 0 0">Checked every 3 hours, hourly Wed evening–Sat (GitHub sometimes runs a few hours late). Last check ${new Date(D.generated).toLocaleString([], { weekday: "short", hour: "numeric", minute: "2-digit" })}.</p></div>`);
+}
+
 function home() {
   const us = D.standings.find((t) => t.isUs) || {};
   const done = D.schedule.filter((s) => s.done && !s.playoffs);
@@ -312,6 +329,7 @@ function home() {
     { key: "womens", label: "Women's", nosort: true },
     { key: "pointDiff", label: "Point diff", num: true, html: (t) => `<span class="${cls(t.pointDiff)}">${signed(t.pointDiff, 0)}</span>` },
   ], D.standings.map((t) => ({ ...t, _cls: t.isUs ? "us" : "" })), { key: "rank", dir: 1 });
+  changesCard();
 }
 
 /* ------------------------------------------------------------ GAME PLAN (lineup builder) */
