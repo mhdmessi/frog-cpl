@@ -161,6 +161,30 @@ function liveSheet(level) {
         if (JSON.stringify(avail) !== JSON.stringify(wk.avail)) (wk.avail = avail), (changed = true);
         if (JSON.stringify(sits) !== JSON.stringify(wk.sits || {})) (wk.sits = sits), (changed = true);
       }
+      // New names on the sheet: usable right away. CPL blocks browsers from reading its roster, so their CPL record
+      // (and real rating) only arrives with the next scheduled update; until then they count as a newcomer.
+      for (const [, id] of cols) {
+        if (!id.startsWith("sheet:") || P[id]) continue;
+        const raw = id.slice(6), name = raw.replace(/\s*\(sub\)\s*$/i, "").trim();
+        const key = name.toLowerCase();
+        const [f0, ...l0] = key.split(" "), last0 = l0.join(" ");
+        const lg = Object.values(D.league || {}).find((x) => x.n.toLowerCase() === key) ||
+          (last0 && Object.values(D.league || {}).find((x) => {
+            const [f, ...l] = x.n.toLowerCase().split(" ");
+            return l.join(" ") === last0 && (f.startsWith(f0) || f0.startsWith(f));
+          }));
+        const p = {
+          id, name, gender: lg ? (lg.g === "M" ? "Male" : "Female") : localStorage.getItem("frogGender:" + name),
+          dupr: lg ? lg.d : null, duprId: null, isSub: /\(sub\)/i.test(raw), isCaptain: false, subCount: 0, sheetName: raw, sheetOnly: true,
+          rating: lg ? lg.r : -1, ratingEst: true, divRank: null, divRanked: null,
+          g: 0, w: 0, l: 0, winPct: null, ppg: null, diff: null, mixG: 0, mixW: 0, genG: 0, genW: 0, clG: 0, clW: 0,
+        };
+        D.players.push(p);
+        P[id] = p;
+        SHORT[id] = name.split(" ")[0];
+        LSHORT = null;
+        changed = true;
+      }
       D.sheetLive = new Date();
       const note = $("#foot").querySelector(".live") || $("#foot").appendChild(document.createElement("span"));
       note.className = "live";
@@ -443,7 +467,7 @@ function lineup(arg, auto) {
   const wk = D.schedule.find((s) => s.week === LU.week);
   if (!wk) return section(`<p class="muted">No matches on the schedule.</p>`);
   if (!LU.sel || LU.selWeek !== LU.week) {
-    LU.sel = new Set(D.players.filter((p) => availFor(wk, p.id) === "yes").map((p) => p.id));
+    LU.sel = new Set(D.players.filter((p) => p.gender && availFor(wk, p.id) === "yes").map((p) => p.id));
     LU.selWeek = LU.week;
   }
   // Sit-out requests: from the sheet ("Yes 3"), changeable here (saved on this device per match).
@@ -514,7 +538,7 @@ function lineup(arg, auto) {
   function drawPick() {
     const grp = (male) =>
       D.players
-        .filter((p) => (p.gender === "Male") === male)
+        .filter((p) => p.gender && (p.gender === "Male") === male)
         .sort((a, b) => {
           const order = { yes: 0, maybe: 1, "": 2, no: 3 };
           return order[availFor(wk, a.id)] - order[availFor(wk, b.id)] || (b.rating || 0) - (a.rating || 0);
@@ -522,14 +546,26 @@ function lineup(arg, auto) {
         .map((p) => {
           const on = LU.sel.has(p.id);
           return `<label class="${on ? "on" : ""}"><input type="checkbox" data-id="${p.id}" ${on ? "checked" : ""}>
-            <span><b>${esc(sn(p.id))}</b> ${p.isSub ? '<span class="tag">sub</span>' : ""}<br>${availPill(availFor(wk, p.id))}
+            <span><b>${esc(sn(p.id))}</b> ${p.isSub ? '<span class="tag">sub</span>' : ""}${p.sheetOnly ? ' <span class="tag neg" data-tip="Just added to the sheet. Their CPL record (and rating) arrives with the next update; until then they count as a newcomer. Make sure they are on our CPL roster before the lineup is due.">new</span>' : ""}<br>${availPill(availFor(wk, p.id))}
             <span class="tag rating ${cls(p.rating)}">${signed(p.rating)}</span>
             ${on ? `<br><select class="sitsel" data-id="${p.id}" data-tip="Games this player asked to sit out">${["", 1, 2, 3, 4, 5, 6, 7, 8]
               .map((n) => `<option value="${n}" ${String(sitOf(p.id) ?? "") === String(n) ? "selected" : ""}>${n === "" ? "Plays as needed" : `Sits ${n} (plays ${8 - n})`}</option>`).join("")}</select>` : ""}</span></label>`;
         })
         .join("");
     $("#luPick").innerHTML = `<div class="tag" style="margin-bottom:6px">MEN</div><div class="pick">${grp(true)}</div>
-      <div class="tag" style="margin:12px 0 6px">WOMEN</div><div class="pick">${grp(false)}</div>`;
+      <div class="tag" style="margin:12px 0 6px">WOMEN</div><div class="pick">${grp(false)}</div>
+      ${D.players.filter((p) => !p.gender).map((p) => `<div class="alert warn" style="margin-top:10px">🆕 <b>${esc(p.name)}</b> was just added to the sheet (${availPill(availFor(wk, p.id))}).
+        <button class="btn ghost gpick" data-id="${esc(p.id)}" data-g="Male">Man</button> <button class="btn ghost gpick" data-id="${esc(p.id)}" data-g="Female">Woman</button></div>`).join("")}`;
+    $("#luPick").querySelectorAll(".gpick").forEach((b) =>
+      b.addEventListener("click", () => {
+        const p = P[b.dataset.id];
+        p.gender = b.dataset.g;
+        localStorage.setItem("frogGender:" + p.name, p.gender);
+        if (availFor(wk, p.id) === "yes") LU.sel.add(p.id);
+        drawPick();
+        scheduleBuild();
+      })
+    );
     $("#luPick").querySelectorAll(".sitsel").forEach((sel) => {
       sel.addEventListener("change", () => {
         sitLocal[sel.dataset.id] = sel.value === "" ? null : Number(sel.value);
@@ -561,7 +597,7 @@ function lineup(arg, auto) {
       const have = [...LU.sel].filter((id) => isMale(id) === male).length;
       const order = { maybe: 0, "": 1 };
       const cands = D.players
-        .filter((p) => (p.gender === "Male") === male && !LU.sel.has(p.id) && availFor(wk, p.id) in order)
+        .filter((p) => p.gender && (p.gender === "Male") === male && !LU.sel.has(p.id) && availFor(wk, p.id) in order)
         .sort((a, b) => order[availFor(wk, a.id)] - order[availFor(wk, b.id)] || (b.rating || 0) - (a.rating || 0));
       cands.slice(0, Math.max(0, 4 - have)).forEach((p) => (LU.sel.add(p.id), added.push(p)));
     }
@@ -835,7 +871,7 @@ function scorecardHTML(games, oppName, opts = {}) {
 }
 
 function rosterHTML(ids, counts, title) {
-  const list = (male) => ids.filter((id) => (D.league[id]?.g === "M") === male)
+  const list = (male) => ids.filter((id) => ((D.league[id]?.g || (P[id]?.gender === "Male" ? "M" : "W")) === "M") === male)
     .sort((a, b) => (counts[b] || 0) - (counts[a] || 0))
     .map((id, i) => `<tr><td class="muted">${male ? "M" : "W"}${i + 1}</td><td><b>${esc(lname(id))}</b></td><td class="num">${counts[id] || 0} games</td></tr>`).join("");
   return `<div class="card"><h3>${esc(title)}</h3><table class="sc"><tbody>${list(true)}${list(false)}</tbody></table></div>`;
@@ -902,7 +938,7 @@ function players() {
   const el = section("");
   sortableTable(el, [
     { key: "name", label: "Player", html: (p) => `<a href="#partners/${p.id}" data-tip="See ${esc(sn(p.id))}'s partners">${esc(p.name)}</a>${badges(p)}`, sort: (p) => p.name },
-    { key: "gender", label: "", nosort: true, html: (p) => (p.gender === "Male" ? "M" : "W") },
+    { key: "gender", label: "", nosort: true, html: (p) => (p.gender === "Male" ? "M" : p.gender ? "W" : "?") },
     { key: "rating", label: "Rating", num: true, html: ratingCell, tip: "Points per game added vs division average" },
     { key: "divRank", label: "Div. rank", num: true, html: (p) => (p.divRank ? `${p.divRank}<span class="muted">/${p.divRanked}</span>` : "–"), sort: (p) => (p.divRank ? -p.divRank : null) },
     { key: "dupr", label: "DUPR", num: true, html: (p) => (p.dupr ? p.dupr.toFixed(2) : `<span class="muted" data-tip="No DUPR rating linked on CPL">–</span>`) },
@@ -1074,7 +1110,7 @@ function scouting(arg) {
   const pl = section(`<h2>Their players</h2><div></div>`).lastElementChild;
   sortableTable(pl, [
     { key: "name", label: "Player" },
-    { key: "gender", label: "", nosort: true, html: (p) => (p.gender === "Male" ? "M" : "W") },
+    { key: "gender", label: "", nosort: true, html: (p) => (p.gender === "Male" ? "M" : p.gender ? "W" : "?") },
     { key: "rating", label: "Rating", num: true, html: (p) => `<span class="rating ${cls(p.rating)}">${signed(p.rating)}</span>` },
     { key: "dupr", label: "DUPR", num: true, html: (p) => (p.dupr ? p.dupr.toFixed(2) : "–") },
     { key: "games", label: "Games", num: true },
