@@ -716,7 +716,7 @@ def insights(d, sigma):
     return out
 
 
-SITE_URL = "https://mhdmessi.github.io/frog-cpl"
+SITE_URL = "https://mhdstudios.github.io/frog-cpl"
 KEEP_CHANGES_DAYS = 21
 
 
