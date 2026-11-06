@@ -844,7 +844,32 @@ function optimize(men, women, { mode, plan, seed = "frog", quick = false, sits =
       if (!best || cs.val > best.s.val) best = { lineup: copy(cur), s: cs };
     }
   }
+  if (!quick) best = polish(best);
   return best;
+  // Final pass: try every single swap or bench change and keep any that helps, until none does.
+  // Guarantees no one-move improvement is left on the table.
+  function polish(b) {
+    let cur = copy(b.lineup), cs = b.s, improved = true;
+    while (improved) {
+      improved = false;
+      for (let r = 0; r < 4; r++)
+        for (const g of ["mx", "mw", "mm", "ww"]) {
+          const pool = g === "mx" || g === "mm" ? men : women;
+          for (let i = 0; i < 4; i++) {
+            const moves = [];
+            for (let j = i + 1; j < 4; j++) moves.push((x) => ([x[r][g][i], x[r][g][j]] = [x[r][g][j], x[r][g][i]]));
+            for (const sub of pool) if (!cur[r][g].includes(sub)) moves.push((x) => (x[r][g][i] = sub));
+            for (const mv of moves) {
+              const nx = copy(cur);
+              mv(nx);
+              const ns = score(nx);
+              if (ns.val > cs.val + 1e-9) (cur = nx), (cs = ns), (improved = true);
+            }
+          }
+        }
+    }
+    return { lineup: cur, s: cs };
+  }
 }
 
 /** CPL-style scorecard: 8 rounds of 4 games (one per court). Odd rounds mixed, even rounds women's + men's. */
